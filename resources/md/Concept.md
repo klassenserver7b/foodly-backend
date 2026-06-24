@@ -12,7 +12,7 @@
 
 -  Rust backend in Docker container selfhostable
 	- API → Websocket
-- SQLite DB für Rezepte
+- DB für Rezepte
 	- Assets und Texte als Hashed links
 - Live editing
 - geteilte Rezepte
