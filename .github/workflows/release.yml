@@ -1,0 +1,154 @@
+name: Release
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+    ## - release
+
+permissions:
+  contents: write
+
+
+env:
+  BIN_NAME: foodly-backend
+  PROJECT_NAME: foodly-backend
+  REPO_NAME: klassenserver7b/foodly-backend
+
+jobs:
+  pre-commit:
+    uses: ./.github/workflows/pre-commit.yml
+
+  check_and_test:
+    uses: ./.github/workflows/check-and-test.yml
+    needs: pre-commit
+
+  dist-rust:
+    name: Rust-dist
+    needs: [ check_and_test ]
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false # don't fail other jobs if one fails
+      matrix:
+        build: [ x86_64-linux, aarch64-linux, x86_64-windows ]
+        rust: [ stable ]
+        include:
+          - build: x86_64-linux
+            os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            cross: false
+          - build: aarch64-linux
+            os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            cross: true
+          - build: x86_64-windows
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+            cross: false
+          # - build: aarch64-macos
+          #   os: macos-latest
+          #   target: aarch64-apple-darwin
+
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v6
+        with:
+          submodules: true
+
+      - name: Install ${{ matrix.rust }} toolchain
+        uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: ${{ matrix.rust }}
+          targets: ${{ matrix.target }}
+
+      - name: Build release binary (non windows)
+        if: matrix.build != 'x86_64-windows'
+        uses: ClementTsang/cargo-action@v0.0.7
+        with:
+          use-cross: ${{ matrix.cross }}
+          command: build
+          args: --release --target ${{ matrix.target }}
+
+      - name: Build release binary (windows)
+        if: matrix.build == 'x86_64-windows'
+        run: |
+          $env:RUSTFLAGS = "-Csymbol-mangling-version=v0"
+          cargo build --release --target ${{ matrix.target }}
+
+      - name: Strip release binary (linux and macos)
+        if: matrix.build == 'x86_64-linux' || matrix.build == 'x86_64-macos'
+        run: strip "target/${{ matrix.target }}/release/$BIN_NAME"
+
+      - name: Strip release binary (arm)
+        if: matrix.build == 'aarch64-linux'
+        run: |
+          docker run --rm -v \
+            "$PWD/target:/target:Z" \
+            rustembedded/cross:${{ matrix.target }} \
+            aarch64-linux-gnu-strip \
+            /target/${{ matrix.target }}/release/$BIN_NAME
+
+      - name: Build archive
+        shell: bash
+        run: |
+          mkdir bins
+          if [ "${{ matrix.os }}" = "windows-2019" ]; then
+            cp "target/${{ matrix.target }}/release/$BIN_NAME.exe" "bins/"
+          else
+            cp "target/${{ matrix.target }}/release/$BIN_NAME" "bins/"
+          fi
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: bins-rust-${{ matrix.build }}
+          path: bins
+
+
+  publish:
+    name: Publish
+    needs: [ dist-rust]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v8
+      - run: ls -al bins-*
+
+      - name: Calculate tag name
+        run: |
+          name=dev
+          if [[ $GITHUB_REF == refs/tags/v* ]]; then
+            name=${GITHUB_REF:10}
+          fi
+          echo val=$name >> $GITHUB_OUTPUT
+          echo TAG=$name >> $GITHUB_ENV
+        id: tagname
+
+      - name: Build archive
+        shell: bash
+        run: |
+          set -ex
+          mkdir bins
+
+          for dir in bins-rust-* ; do
+              platform=${dir#"bins-rust-"}
+              unset exe
+              if [[ $platform =~ "windows" ]]; then
+                  exe=".exe"
+              fi
+              pkgname=$PROJECT_NAME-$TAG-$platform
+              mv bins-rust-$platform/$BIN_NAME$exe bins/$pkgname$exe
+          done
+          chmod -R +x bins
+
+      - name: Upload binaries to release
+        uses: svenstaro/upload-release-action@v2
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          file: bins/*
+          file_glob: true
+          tag: ${{ steps.tagname.outputs.val }}
+          overwrite: true
+
+      - name: Extract version
+        id: extract-version
+        run: |
+          printf "::set-output name=%s::%s\n" tag-name "${GITHUB_REF#refs/tags/}"

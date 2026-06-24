@@ -1,0 +1,11 @@
+files = { glob = ["src/**/*.rs", "*.toml", "*.ya?ml", ".github/**/*.ya?ml"] }
+
+[[repos]]
+repo = "https://github.com/pre-commit/pre-commit-hooks"
+rev = "v6.0.0"
+hooks = [{ id = "trailing-whitespace" }, { id = "check-case-conflict" }, { id = "end-of-file-fixer" }, { id = "check-toml" }, { id = "check-yaml" }, { id = "check-json" }, { id = "pretty-format-json", args = ["--autofix"] }, { id = "check-xml" }]
+
+[[repos]]
+repo = "https://github.com/doublify/pre-commit-rust"
+rev = "v1.0"
+hooks = [{ id = "fmt" }, { id = "cargo-check" }, { id = "clippy" }]

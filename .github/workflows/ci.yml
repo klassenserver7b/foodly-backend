@@ -1,0 +1,15 @@
+name: CI
+on:
+  pull_request:
+    branches: [ "main" ]
+
+permissions:
+  contents: read
+
+jobs:
+  pre-commit:
+    uses: ./.github/workflows/pre-commit.yml
+
+  check_and_test:
+    uses: ./.github/workflows/check-and-test.yml
+    needs: pre-commit

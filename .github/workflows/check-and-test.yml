@@ -1,0 +1,44 @@
+name: Cargo check and test
+on:
+  workflow_call:
+    inputs:
+      release:
+        description: "Whether this workflow is called from a release workflow"
+        type: boolean
+        default: false
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  build_and_test:
+    name: Build and Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v6
+
+      - name: Setup toolchain
+        uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: stable
+
+      - name: Setup Rust Cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "foodly-CI"
+
+      - name: Cargo check
+        uses: ClementTsang/cargo-action@v0.0.7
+        id: cargo-check
+        with:
+          command: check
+          args: ${{ inputs.release == 'true' && '--release' || '' }}
+
+      - name: Cargo test
+        uses: ClementTsang/cargo-action@v0.0.7
+        id: cargo-test
+        with:
+          command: test
+          args: ${{ inputs.release == 'true' && '--release' || '' }}
