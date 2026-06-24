@@ -1,0 +1,205 @@
+# Company Community License 1.0
+
+Copyright (c) [2026] [Foodly]
+
+All rights reserved.
+
+## 1. Purpose
+
+The purpose of this License is to make the Software source code publicly available while protecting the Licensor's ability to commercially offer and license the Software.
+
+This License grants broad rights for personal, educational, non-profit, and internal business use while restricting certain commercial exploitation activities.
+
+By copying, modifying, distributing, accessing, or using the Software, you agree to the terms of this License.
+
+## 2. Definitions
+
+"Licensor" means [Foodly].
+
+"Software" means all source code, object code, binaries, documentation, examples, build scripts, configuration files, and other materials distributed by the Licensor under this License.
+
+"Derivative Work" means any modification, adaptation, enhancement, extension, translation, or other work based upon the Software.
+
+"Organization" means any legal entity, company, partnership, association, government body, educational institution, or other organized group.
+
+"Internal Use" means use solely for the benefit of the user or Organization itself and not for providing services or functionality to unrelated third parties.
+
+"Hosted Service" means providing the functionality of the Software, directly or indirectly, to one or more third parties through a network, including but not limited to SaaS, PaaS, managed services, cloud services, APIs, web services, or similar offerings.
+
+"Single-Customer Managed Deployment" means operation of the Software exclusively for one identified customer in a dedicated environment that is not shared with other customers.
+
+"Commercial Product" means any software product, appliance, platform, service, or solution offered to third parties for commercial advantage or monetary compensation.
+
+"Distribution" means making the Software or a Derivative Work available to any third party in source code form, binary form, container form, appliance form, or any other form.
+
+## 3. Grant of Rights
+
+Subject to the terms of this License, the Licensor grants you a worldwide, non-exclusive, non-transferable, revocable license to:
+
+1. Use the Software for personal purposes.
+2. Use the Software for educational purposes.
+3. Use the Software for non-profit purposes.
+4. Use the Software internally within an Organization.
+5. Copy the Software.
+6. Modify the Software.
+7. Create Derivative Works.
+8. Distribute the Software.
+9. Distribute Derivative Works in accordance with Section 7.
+10. Provide consulting, implementation, customization, training, and support services related to the Software.
+
+All rights not expressly granted are reserved by the Licensor.
+
+## 4. Permitted Commercial Use
+
+The following activities are permitted without a separate commercial agreement:
+
+1. Internal business use.
+2. Internal deployment within a company.
+3. Internal deployment within government agencies.
+4. Internal deployment within educational institutions.
+5. Consulting services concerning the Software.
+6. Custom development services for users of the Software.
+
+## 5. Restricted Activities
+
+Without prior written authorization from the Licensor, you may NOT:
+
+### 5.1 Hosted Services
+
+1. Offer the Software as a Hosted Service.
+2. Offer the Software as a SaaS product.
+3. Offer the Software as a cloud service.
+4. Offer the Software as a platform service.
+5. Offer the Software through a multi-tenant deployment.
+6. Offer paid access to functionality provided by the Software.
+7. Offer free public access to functionality provided by the Software where such access constitutes a Hosted Service.
+
+### 5.2 Commercial Products
+
+1. Incorporate the Software into a Commercial Product.
+2. Bundle the Software into a Commercial Product.
+3. Embed the Software into a Commercial Product.
+4. Sell the Software.
+5. Sell a Derivative Work of the Software.
+6. Distribute the Software as part of an OEM offering.
+7. Distribute the Software as part of a white-label offering.
+
+### 5.3 Circumvention
+
+You may not structure transactions, deployments, partnerships, or technical architectures for the purpose of avoiding the restrictions of this License.
+
+## 6. Commercial License Exception
+
+Notwithstanding any restriction set forth in Section 5 or elsewhere in this License, the Licensor may, at its sole discretion, grant to any person or Organization a separate written commercial license ("Commercial License") authorizing activities that would otherwise be restricted under this License, including but not limited to:
+
+1. Offering the Software as a Hosted Service.
+2. Incorporating the Software into a Commercial Product.
+3. Any other activity restricted under Section 5.
+
+A Commercial License may contain terms that differ from, supplement, or supersede the terms of this License with respect to the licensee receiving it, including different fees, support obligations, service levels, indemnities, or warranties.
+
+The grant of a Commercial License to one party does not modify, expand, or otherwise affect the rights or obligations of any other licensee under this License, and use of the Software under this License remains subject to all of its terms unless and until a separate Commercial License has been executed in writing by the Licensor.
+
+Nothing in this Section obligates the Licensor to offer or grant a Commercial License to any party, and the absence of a Commercial License does not constitute authorization to engage in any activity restricted under Section 5.
+
+## 7. Distribution Requirements
+
+You may distribute the Software or Derivative Works provided that:
+
+1. A copy of this License is included.
+2. Copyright notices are preserved.
+3. Attribution notices are preserved.
+4. Recipients receive the same rights granted by this License.
+
+If you distribute:
+
+* modified source code,
+* modified binaries,
+* modified containers,
+* modified packages, or
+* any other Derivative Work,
+
+you must make the complete corresponding source code of your modifications publicly available under this License at no charge.
+
+Internal modifications that are not Distributed are not required to be published.
+
+## 8. Forks
+
+Forks are permitted.
+
+A fork may not use a name that is identical to the original project's name. A fork may use a name that is similar to, derived from, or evocative of the original project's name — for example, by adding a prefix, suffix, or other distinguishing modifier — provided that:
+
+1. Attribution to the original project is preserved.
+2. The fork clearly identifies itself as a fork.
+3. The fork's README prominently states that it is not the official version.
+4. Users can reasonably distinguish the fork from the official project.
+
+The Licensor may require additional clarification where confusion is likely, including where a fork's chosen name, although not identical to the original project's name, is nonetheless likely to mislead users as to its origin, affiliation, or official status.
+
+## 9. Single-Customer Managed Deployments
+
+A service provider may operate the Software on behalf of a single customer only if:
+
+1. The deployment is dedicated to that customer.
+2. The deployment is not shared with other customers.
+3. The Software is not marketed as a service offering.
+4. The provider has entered into a separate written commercial agreement with the Licensor.
+
+Absent such agreement, operation for customers is prohibited.
+
+## 10. Hosting Platform Exception
+
+A hosting provider, marketplace, package registry, container registry, or cloud platform may provide deployment templates, installation packages, marketplace listings, or one-click deployment mechanisms for the Software if:
+
+1. The provider does not operate the Software for the user.
+2. The provider does not market the Software as a hosted service.
+3. The Software is operated solely by the deploying user or Organization.
+4. The provider does not offer access to the Software's functionality as a service.
+
+## 11. Trademarks and Branding
+
+This License grants no rights to:
+
+* trademarks,
+* service marks,
+* logos,
+* domain names,
+* trade names,
+* branding,
+* trade dress,
+
+of the Licensor.
+
+Use of such assets requires separate permission unless expressly required for attribution under this License.
+
+## 12. Contributions
+
+Unless otherwise agreed in writing, any contribution submitted to the Licensor may be incorporated into the Software and licensed under any terms chosen by the Licensor.
+
+Contributors retain copyright to their own contributions.
+
+## 13. Termination
+
+Any violation of this License automatically terminates all rights granted under it.
+
+Upon termination, you must cease all use, distribution, and operation of the Software unless and until the violation is cured and rights are reinstated by the Licensor.
+
+## 14. Disclaimer of Warranty
+
+THE SOFTWARE IS PROVIDED "AS IS".
+
+TO THE MAXIMUM EXTENT PERMITTED BY LAW, THE LICENSOR DISCLAIMS ALL WARRANTIES, EXPRESS OR IMPLIED, INCLUDING WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, TITLE, NON-INFRINGEMENT, AND ACCURACY.
+
+## 15. Limitation of Liability
+
+TO THE MAXIMUM EXTENT PERMITTED BY LAW, THE LICENSOR SHALL NOT BE LIABLE FOR ANY DAMAGES, INCLUDING DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, CONSEQUENTIAL, OR PUNITIVE DAMAGES ARISING FROM OR RELATING TO THE SOFTWARE OR THIS LICENSE.
+
+## 16. Governing Law
+
+This License shall be governed by the laws of [JURISDICTION], excluding conflict-of-law rules.
+
+Any disputes arising under this License shall be subject to the exclusive jurisdiction of the courts located in [JURISDICTION].
+
+## 17. Entire Agreement
+
+This License constitutes the complete agreement concerning the Software and supersedes all prior agreements and understandings regarding the Software.
