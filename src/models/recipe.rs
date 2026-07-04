@@ -1,3 +1,8 @@
+//! Domain models and data structures for recipes.
+//!
+//! This module contains the core structs used for representing recipes,
+//! their ingredients, sections, and associated metadata.
+
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -34,6 +39,10 @@ pub struct Section {
     pub steps: Vec<String>,
 }
 
+/// The core `Recipe` entity representing a complete recipe in the system.
+///
+/// Contains metadata, lists of ingredients structured by `Section`, and
+/// associated imagery and tags.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Recipe {

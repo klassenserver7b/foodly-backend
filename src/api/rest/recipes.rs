@@ -1,3 +1,8 @@
+//! REST API endpoints for recipe management.
+//!
+//! Provides handlers for listing, creating, reading, updating, deleting,
+//! and copying recipes.
+
 use crate::models::recipe::{
     CreateRecipe, IngredientRef, Recipe, RecipeIngredient, RecipePreview, Section,
 };
@@ -11,6 +16,7 @@ use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::Ordering;
 
+/// Configures and returns the Axum router for recipe endpoints.
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/", get(list_recipes).post(create_recipe))

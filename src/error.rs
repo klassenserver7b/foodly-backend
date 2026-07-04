@@ -1,3 +1,8 @@
+//! Global error handling structures and `IntoResponse` implementations.
+//!
+//! Provides the unified `AppError` type used throughout the API handlers
+//! to map internal domain/infrastructure errors into standard HTTP responses.
+
 use axum::{
     Json,
     http::StatusCode,
@@ -5,11 +10,16 @@ use axum::{
 };
 use serde_json::json;
 
-#[derive(Debug)]
+/// Unified application error type returned by Axum handlers.
+///
+/// Wraps both explicit user-facing errors (like `NotFound`) and internal
+/// server errors (via `anyhow::Error`). Implements `IntoResponse` to
+/// serialize cleanly into a JSON error body.
 pub enum AppError {
     NotFound(String),
     Forbidden,
     Unprocessable(String),
+    Internal(anyhow::Error),
 }
 
 impl IntoResponse for AppError {
@@ -24,6 +34,14 @@ impl IntoResponse for AppError {
             AppError::Unprocessable(msg) => {
                 (StatusCode::UNPROCESSABLE_ENTITY, "UNPROCESSABLE", msg)
             }
+            AppError::Internal(err) => {
+                eprintln!("Internal error: {:?}", err);
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "INTERNAL_SERVER_ERROR",
+                    "An internal server error occurred".to_string(),
+                )
+            }
         };
 
         let body = Json(json!({
@@ -34,5 +52,17 @@ impl IntoResponse for AppError {
         }));
 
         (status, body).into_response()
+    }
+}
+
+impl From<anyhow::Error> for AppError {
+    fn from(err: anyhow::Error) -> Self {
+        Self::Internal(err)
+    }
+}
+
+impl From<sqlx::Error> for AppError {
+    fn from(err: sqlx::Error) -> Self {
+        Self::Internal(err.into())
     }
 }
