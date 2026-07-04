@@ -1,7 +1,7 @@
 //! REST API endpoints for recipe management.
 //!
 //! Provides handlers for listing, creating, reading, updating, deleting,
-//! and copying recipes.
+//! and copying recipes using PostgreSQL via `sqlx`.
 
 use crate::models::recipe::{
     CreateRecipe, IngredientRef, Recipe, RecipeIngredient, RecipePreview, Section,
@@ -12,9 +12,7 @@ use axum::{
     extract::{Path, Query, State},
     routing::{get, post},
 };
-use chrono::Utc;
 use serde::{Deserialize, Serialize};
-use std::sync::atomic::Ordering;
 
 /// Configures and returns the Axum router for recipe endpoints.
 pub fn router() -> Router<AppState> {
@@ -44,31 +42,51 @@ async fn list_recipes(
     Extension(user_id): Extension<i32>,
     Query(query): Query<PaginationQuery>,
 ) -> Result<Json<PaginatedResponse<RecipePreview>>, AppError> {
-    let limit = query.limit.unwrap_or(20).min(100);
-    let recipes = state.recipes.read().await;
+    let limit = query.limit.unwrap_or(20).min(100) as i64;
+    let u_id = user_id as i64;
 
-    // Filter recipes accessible to user
-    let mut accessible: Vec<RecipePreview> = recipes
-        .iter()
-        .filter(|r| {
-            r.owner == user_id || r.editors.contains(&user_id) || r.viewers.contains(&user_id)
-        })
-        .cloned()
-        .map(RecipePreview::from)
-        .collect();
+    let records = sqlx::query!(
+        r#"
+        SELECT
+            r.id, r.owner_id, r.name, r.source, r.time_display,
+            r.work_minutes, r.overall_minutes, r.size_number, r.size_text, r.main_image_id,
+            r.created_at, r.updated_at,
+            COALESCE((SELECT array_agg(user_id) FROM recipe_editors WHERE recipe_id = r.id), '{}') as "editors!",
+            COALESCE((SELECT array_agg(user_id) FROM recipe_viewers WHERE recipe_id = r.id), '{}') as "viewers!",
+            COALESCE((SELECT array_agg(tag_id ORDER BY position) FROM recipe_tags WHERE recipe_id = r.id), '{}') as "tags!"
+        FROM recipes r
+        WHERE r.owner_id = $1
+           OR EXISTS (SELECT 1 FROM recipe_editors e WHERE e.recipe_id = r.id AND e.user_id = $1)
+           OR EXISTS (SELECT 1 FROM recipe_viewers v WHERE v.recipe_id = r.id AND v.user_id = $1)
+        ORDER BY r.id ASC
+        LIMIT $2
+        "#,
+        u_id, limit
+    ).fetch_all(&state.pool).await?;
 
-    accessible.sort_by_key(|r| r.id);
+    let mut data = Vec::with_capacity(records.len());
+    for rec in records {
+        data.push(RecipePreview {
+            id: rec.id as i32,
+            owner: rec.owner_id as i32,
+            editors: rec.editors.into_iter().map(|v| v as i32).collect(),
+            viewers: rec.viewers.into_iter().map(|v| v as i32).collect(),
+            name: rec.name,
+            tags: rec.tags,
+            source: rec.source,
+            rating: vec![],
+            time: rec.time_display,
+            work_minutes: rec.work_minutes,
+            overall_minutes: rec.overall_minutes,
+            size_number: rec.size_number,
+            size_text: rec.size_text,
+            main_image: rec.main_image_id.map(|id| id as i32),
+            created_at: Some(rec.created_at.to_rfc3339()),
+            updated_at: Some(rec.updated_at.to_rfc3339()),
+        });
+    }
 
-    // Simple pagination: if cursor is present, we expect it to be a string like "eyJpZCI6NDJ9".
-    // For this mock, let's just parse the cursor as stringified ID.
-    // Usually it is base64 encoded JSON. We'll skip proper cursor implementation for now.
-    let _start_index = 0; // In a real app we'd parse the cursor
-    let data: Vec<RecipePreview> = accessible.into_iter().take(limit).collect();
-
-    Ok(Json(PaginatedResponse {
-        data,
-        cursor: None, // No more pages for mock
-    }))
+    Ok(Json(PaginatedResponse { data, cursor: None }))
 }
 
 async fn get_recipe(
@@ -76,90 +94,101 @@ async fn get_recipe(
     Extension(user_id): Extension<i32>,
     Path(id): Path<i32>,
 ) -> Result<Json<Recipe>, AppError> {
-    let recipes = state.recipes.read().await;
-    let recipe = recipes
-        .iter()
-        .find(|r| r.id == id)
+    let r_id = id as i64;
+    let u_id = user_id as i64;
+
+    let rec = sqlx::query!(
+        r#"
+        SELECT
+            r.id, r.owner_id, r.name, r.source, r.time_display,
+            r.work_minutes, r.overall_minutes, r.size_number, r.size_text, r.main_image_id, r.notes,
+            r.created_at, r.updated_at,
+            COALESCE((SELECT array_agg(user_id) FROM recipe_editors WHERE recipe_id = r.id), '{}') as "editors!",
+            COALESCE((SELECT array_agg(user_id) FROM recipe_viewers WHERE recipe_id = r.id), '{}') as "viewers!",
+            COALESCE((SELECT array_agg(tag_id ORDER BY position) FROM recipe_tags WHERE recipe_id = r.id), '{}') as "tags!",
+            COALESCE((SELECT array_agg(image_id ORDER BY position) FROM recipe_images WHERE recipe_id = r.id), '{}') as "images!"
+        FROM recipes r
+        WHERE r.id = $1
+        "#,
+        r_id
+    ).fetch_optional(&state.pool).await?
         .ok_or_else(|| AppError::NotFound("Recipe not found".into()))?;
 
-    if recipe.owner != user_id
-        && !recipe.editors.contains(&user_id)
-        && !recipe.viewers.contains(&user_id)
-    {
+    if rec.owner_id != u_id && !rec.editors.contains(&u_id) && !rec.viewers.contains(&u_id) {
         return Err(AppError::Forbidden);
     }
 
-    Ok(Json(recipe.clone()))
-}
+    let sec_rows = sqlx::query!(
+        "SELECT id, name FROM sections WHERE recipe_id = $1 ORDER BY position ASC",
+        r_id
+    )
+    .fetch_all(&state.pool)
+    .await?;
 
-fn map_create_to_recipe(state: &AppState, id: i32, owner: i32, input: CreateRecipe) -> Recipe {
-    let mut next_section_id = 1;
-    let mut next_ingredient_id = 1;
+    let mut sections = Vec::with_capacity(sec_rows.len());
+    for sec in sec_rows {
+        let step_rows = sqlx::query!(
+            "SELECT text FROM steps WHERE section_id = $1 ORDER BY position ASC",
+            sec.id
+        )
+        .fetch_all(&state.pool)
+        .await?;
 
-    let sections = input
-        .sections
-        .into_iter()
-        .map(|s| {
-            let sec_id = next_section_id;
-            next_section_id += 1;
+        let ing_rows = sqlx::query!(
+            r#"
+            SELECT ri.id, ri.ingredient_id, i.name as "ingredient_name?", ri.text, ri.amount, ri.amount_prefix, ri.unit
+            FROM recipe_ingredients ri
+            LEFT JOIN ingredients i ON ri.ingredient_id = i.id
+            WHERE ri.section_id = $1
+            ORDER BY ri.position ASC
+            "#,
+            sec.id
+        ).fetch_all(&state.pool).await?;
 
-            let ingredients = s
-                .ingredients
+        sections.push(Section {
+            id: sec.id as i32,
+            name: sec.name,
+            steps: step_rows.into_iter().map(|s| s.text).collect(),
+            ingredients: ing_rows
                 .into_iter()
-                .map(|i| {
-                    let ing_id = next_ingredient_id;
-                    next_ingredient_id += 1;
-
-                    let ingredient_ref = i.ingredient.and_then(|id| {
-                        state.ingredients.get(&id).map(|name| IngredientRef {
-                            id,
-                            name: name.clone(),
-                        })
-                    });
-
-                    RecipeIngredient {
-                        id: ing_id,
-                        ingredient: ingredient_ref,
-                        text: i.text,
-                        amount: i.amount,
-                        amount_prefix: i.amount_prefix,
-                        unit: i.unit,
-                    }
+                .map(|i| RecipeIngredient {
+                    id: i.id as i32,
+                    ingredient: i.ingredient_id.map(|id| IngredientRef {
+                        id: id as i32,
+                        name: i.ingredient_name.unwrap_or_default(),
+                    }),
+                    text: i.text,
+                    amount: i.amount,
+                    amount_prefix: i.amount_prefix,
+                    unit: i.unit,
                 })
-                .collect();
-
-            Section {
-                id: sec_id,
-                name: s.name,
-                ingredients,
-                steps: s.steps,
-            }
-        })
-        .collect();
-
-    let now = Utc::now().to_rfc3339();
-
-    Recipe {
-        id,
-        owner,
-        editors: vec![],
-        viewers: vec![],
-        name: input.name,
-        tags: input.tags,
-        source: input.source,
-        rating: vec![],
-        time: input.time,
-        work_minutes: input.work_minutes,
-        overall_minutes: input.overall_minutes,
-        size_number: input.size_number,
-        size_text: input.size_text,
-        notes: input.notes,
-        main_image: input.main_image,
-        images: input.images,
-        sections,
-        created_at: Some(now.clone()),
-        updated_at: Some(now),
+                .collect(),
+        });
     }
+
+    let recipe = Recipe {
+        id: rec.id as i32,
+        owner: rec.owner_id as i32,
+        editors: rec.editors.into_iter().map(|v| v as i32).collect(),
+        viewers: rec.viewers.into_iter().map(|v| v as i32).collect(),
+        name: rec.name,
+        tags: rec.tags,
+        source: rec.source,
+        rating: vec![],
+        time: rec.time_display,
+        work_minutes: rec.work_minutes,
+        overall_minutes: rec.overall_minutes,
+        size_number: rec.size_number,
+        size_text: rec.size_text,
+        notes: rec.notes,
+        main_image: rec.main_image_id.map(|id| id as i32),
+        images: rec.images.into_iter().map(|v| v as i32).collect(),
+        sections,
+        created_at: Some(rec.created_at.to_rfc3339()),
+        updated_at: Some(rec.updated_at.to_rfc3339()),
+    };
+
+    Ok(Json(recipe))
 }
 
 async fn create_recipe(
@@ -171,12 +200,66 @@ async fn create_recipe(
         return Err(AppError::Unprocessable("Name cannot be empty".into()));
     }
 
-    let id = state.next_recipe_id.fetch_add(1, Ordering::SeqCst);
-    let recipe = map_create_to_recipe(&state, id, user_id, payload);
+    let mut tx = state.pool.begin().await?;
+    let u_id = user_id as i64;
+    let rec_id = sqlx::query!(
+        r#"
+        INSERT INTO recipes (owner_id, name, source, time_display, work_minutes, overall_minutes, size_number, size_text, notes, main_image_id)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        RETURNING id
+        "#,
+        u_id, payload.name, payload.source, payload.time, payload.work_minutes, payload.overall_minutes,
+        payload.size_number, payload.size_text, &payload.notes, payload.main_image.map(|i| i as i64)
+    ).fetch_one(&mut *tx).await?.id;
 
-    state.recipes.write().await.push(recipe.clone());
+    for (pos, tag) in payload.tags.into_iter().enumerate() {
+        sqlx::query!(
+            "INSERT INTO recipe_tags (recipe_id, tag_id, position) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING",
+            rec_id, tag, pos as i32
+        ).execute(&mut *tx).await?;
+    }
 
-    Ok(Json(recipe))
+    for (pos, img) in payload.images.into_iter().enumerate() {
+        sqlx::query!(
+            "INSERT INTO recipe_images (recipe_id, image_id, position) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING",
+            rec_id, img as i64, pos as i32
+        ).execute(&mut *tx).await?;
+    }
+
+    for (s_pos, sec) in payload.sections.into_iter().enumerate() {
+        let sec_id = sqlx::query!(
+            "INSERT INTO sections (recipe_id, name, position) VALUES ($1, $2, $3) RETURNING id",
+            rec_id,
+            sec.name,
+            s_pos as i32
+        )
+        .fetch_one(&mut *tx)
+        .await?
+        .id;
+
+        for (st_pos, step) in sec.steps.into_iter().enumerate() {
+            sqlx::query!(
+                "INSERT INTO steps (section_id, text, position) VALUES ($1, $2, $3)",
+                sec_id,
+                step,
+                st_pos as i32
+            )
+            .execute(&mut *tx)
+            .await?;
+        }
+
+        for (i_pos, ing) in sec.ingredients.into_iter().enumerate() {
+            sqlx::query!(
+                "INSERT INTO recipe_ingredients (section_id, ingredient_id, text, amount, amount_prefix, unit, position) VALUES ($1, $2, $3, $4, $5, $6, $7)",
+                sec_id, ing.ingredient.map(|i| i as i64), ing.text, ing.amount, ing.amount_prefix, ing.unit, i_pos as i32
+            ).execute(&mut *tx).await?;
+        }
+    }
+
+    tx.commit().await?;
+
+    // Reuse get_recipe logic internally
+    get_recipe(State(state), Extension(user_id), Path(rec_id as i32)).await
 }
 
 async fn update_recipe(
@@ -189,27 +272,90 @@ async fn update_recipe(
         return Err(AppError::Unprocessable("Name cannot be empty".into()));
     }
 
-    let mut recipes = state.recipes.write().await;
-    let index = recipes
-        .iter()
-        .position(|r| r.id == id)
+    let r_id = id as i64;
+    let u_id = user_id as i64;
+
+    let mut tx = state.pool.begin().await?;
+
+    // Check permissions
+    let owner_check = sqlx::query!(
+        "SELECT owner_id, EXISTS(SELECT 1 FROM recipe_editors WHERE recipe_id = $1 AND user_id = $2) as is_editor FROM recipes WHERE id = $1",
+        r_id, u_id
+    ).fetch_optional(&mut *tx).await?
         .ok_or_else(|| AppError::NotFound("Recipe not found".into()))?;
 
-    let existing = &recipes[index];
-    if existing.owner != user_id && !existing.editors.contains(&user_id) {
+    if owner_check.owner_id != u_id && !owner_check.is_editor.unwrap_or(false) {
         return Err(AppError::Forbidden);
     }
 
-    let mut updated_recipe = map_create_to_recipe(&state, id, existing.owner, payload);
-    updated_recipe.editors = existing.editors.clone();
-    updated_recipe.viewers = existing.viewers.clone();
-    updated_recipe.rating = existing.rating.clone();
-    updated_recipe.created_at = existing.created_at.clone();
-    updated_recipe.updated_at = Some(Utc::now().to_rfc3339());
+    // Update main recipe
+    sqlx::query!(
+        r#"
+        UPDATE recipes SET
+            name = $2, source = $3, time_display = $4, work_minutes = $5, overall_minutes = $6,
+            size_number = $7, size_text = $8, notes = $9, main_image_id = $10, updated_at = now()
+        WHERE id = $1
+        "#,
+        r_id,
+        payload.name,
+        payload.source,
+        payload.time,
+        payload.work_minutes,
+        payload.overall_minutes,
+        payload.size_number,
+        payload.size_text,
+        &payload.notes,
+        payload.main_image.map(|i| i as i64)
+    )
+    .execute(&mut *tx)
+    .await?;
 
-    recipes[index] = updated_recipe.clone();
+    // Recreate tags, images, sections
+    sqlx::query!("DELETE FROM recipe_tags WHERE recipe_id = $1", r_id)
+        .execute(&mut *tx)
+        .await?;
+    for (pos, tag) in payload.tags.into_iter().enumerate() {
+        sqlx::query!("INSERT INTO recipe_tags (recipe_id, tag_id, position) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING", r_id, tag, pos as i32).execute(&mut *tx).await?;
+    }
 
-    Ok(Json(updated_recipe))
+    sqlx::query!("DELETE FROM recipe_images WHERE recipe_id = $1", r_id)
+        .execute(&mut *tx)
+        .await?;
+    for (pos, img) in payload.images.into_iter().enumerate() {
+        sqlx::query!("INSERT INTO recipe_images (recipe_id, image_id, position) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING", r_id, img as i64, pos as i32).execute(&mut *tx).await?;
+    }
+
+    sqlx::query!("DELETE FROM sections WHERE recipe_id = $1", r_id)
+        .execute(&mut *tx)
+        .await?;
+    for (s_pos, sec) in payload.sections.into_iter().enumerate() {
+        let sec_id = sqlx::query!(
+            "INSERT INTO sections (recipe_id, name, position) VALUES ($1, $2, $3) RETURNING id",
+            r_id,
+            sec.name,
+            s_pos as i32
+        )
+        .fetch_one(&mut *tx)
+        .await?
+        .id;
+        for (st_pos, step) in sec.steps.into_iter().enumerate() {
+            sqlx::query!(
+                "INSERT INTO steps (section_id, text, position) VALUES ($1, $2, $3)",
+                sec_id,
+                step,
+                st_pos as i32
+            )
+            .execute(&mut *tx)
+            .await?;
+        }
+        for (i_pos, ing) in sec.ingredients.into_iter().enumerate() {
+            sqlx::query!("INSERT INTO recipe_ingredients (section_id, ingredient_id, text, amount, amount_prefix, unit, position) VALUES ($1, $2, $3, $4, $5, $6, $7)", sec_id, ing.ingredient.map(|i| i as i64), ing.text, ing.amount, ing.amount_prefix, ing.unit, i_pos as i32).execute(&mut *tx).await?;
+        }
+    }
+
+    tx.commit().await?;
+
+    get_recipe(State(state), Extension(user_id), Path(id)).await
 }
 
 async fn delete_recipe(
@@ -217,17 +363,28 @@ async fn delete_recipe(
     Extension(user_id): Extension<i32>,
     Path(id): Path<i32>,
 ) -> Result<axum::http::StatusCode, AppError> {
-    let mut recipes = state.recipes.write().await;
-    let index = recipes
-        .iter()
-        .position(|r| r.id == id)
-        .ok_or_else(|| AppError::NotFound("Recipe not found".into()))?;
+    let r_id = id as i64;
+    let u_id = user_id as i64;
 
-    if recipes[index].owner != user_id {
-        return Err(AppError::Forbidden);
+    let res = sqlx::query!(
+        "DELETE FROM recipes WHERE id = $1 AND owner_id = $2",
+        r_id,
+        u_id
+    )
+    .execute(&state.pool)
+    .await?;
+
+    if res.rows_affected() == 0 {
+        // Either not found or forbidden
+        let exists = sqlx::query!("SELECT 1 as x FROM recipes WHERE id = $1", r_id)
+            .fetch_optional(&state.pool)
+            .await?
+            .is_some();
+        if exists {
+            return Err(AppError::Forbidden);
+        }
+        return Err(AppError::NotFound("Recipe not found".into()));
     }
-
-    recipes.remove(index);
 
     Ok(axum::http::StatusCode::NO_CONTENT)
 }
@@ -237,32 +394,42 @@ async fn copy_recipe(
     Extension(user_id): Extension<i32>,
     Path(id): Path<i32>,
 ) -> Result<Json<Recipe>, AppError> {
-    let mut recipes = state.recipes.write().await;
-    let index = recipes
-        .iter()
-        .position(|r| r.id == id)
-        .ok_or_else(|| AppError::NotFound("Recipe not found".into()))?;
+    let original = get_recipe(State(state.clone()), Extension(user_id), Path(id))
+        .await?
+        .0;
 
-    let existing = &recipes[index];
-    if existing.owner != user_id
-        && !existing.editors.contains(&user_id)
-        && !existing.viewers.contains(&user_id)
-    {
-        return Err(AppError::Forbidden);
-    }
+    let create_payload = CreateRecipe {
+        name: format!("{} (Copy)", original.name),
+        tags: original.tags,
+        source: original.source,
+        time: original.time,
+        work_minutes: original.work_minutes,
+        overall_minutes: original.overall_minutes,
+        size_number: original.size_number,
+        size_text: original.size_text,
+        notes: original.notes,
+        main_image: original.main_image,
+        images: original.images,
+        sections: original
+            .sections
+            .into_iter()
+            .map(|s| crate::models::recipe::CreateSection {
+                name: s.name,
+                ingredients: s
+                    .ingredients
+                    .into_iter()
+                    .map(|i| crate::models::recipe::CreateRecipeIngredient {
+                        ingredient: i.ingredient.map(|ing| ing.id),
+                        text: i.text,
+                        amount: i.amount,
+                        amount_prefix: i.amount_prefix,
+                        unit: i.unit,
+                    })
+                    .collect(),
+                steps: s.steps,
+            })
+            .collect(),
+    };
 
-    let mut copied_recipe = existing.clone();
-    let new_id = state.next_recipe_id.fetch_add(1, Ordering::SeqCst);
-    copied_recipe.id = new_id;
-    copied_recipe.owner = user_id;
-    copied_recipe.editors = vec![];
-    copied_recipe.viewers = vec![];
-    copied_recipe.name = format!("{} (Copy)", copied_recipe.name);
-    let now = Utc::now().to_rfc3339();
-    copied_recipe.created_at = Some(now.clone());
-    copied_recipe.updated_at = Some(now);
-
-    recipes.push(copied_recipe.clone());
-
-    Ok(Json(copied_recipe))
+    create_recipe(State(state), Extension(user_id), Json(create_payload)).await
 }
