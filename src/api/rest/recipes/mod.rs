@@ -2,10 +2,9 @@
 //!
 //! Provides handlers for listing, creating, reading, updating, deleting,
 //! and copying recipes using PostgreSQL via `sqlx`.
+mod helpers;
 
-use crate::models::recipe::{
-    CreateRecipe, IngredientRef, Recipe, RecipeIngredient, RecipePreview, Section,
-};
+use crate::models::recipe::{CreateRecipe, Recipe, RecipePreview};
 use crate::{AppState, error::AppError};
 use axum::{
     Extension, Json, Router,
@@ -118,53 +117,7 @@ async fn get_recipe(
         return Err(AppError::Forbidden);
     }
 
-    let sec_rows = sqlx::query!(
-        "SELECT id, name FROM sections WHERE recipe_id = $1 ORDER BY position ASC",
-        r_id
-    )
-    .fetch_all(&state.pool)
-    .await?;
-
-    let mut sections = Vec::with_capacity(sec_rows.len());
-    for sec in sec_rows {
-        let step_rows = sqlx::query!(
-            "SELECT text FROM steps WHERE section_id = $1 ORDER BY position ASC",
-            sec.id
-        )
-        .fetch_all(&state.pool)
-        .await?;
-
-        let ing_rows = sqlx::query!(
-            r#"
-            SELECT ri.id, ri.ingredient_id, i.name as "ingredient_name?", ri.text, ri.amount, ri.amount_prefix, ri.unit
-            FROM recipe_ingredients ri
-            LEFT JOIN ingredients i ON ri.ingredient_id = i.id
-            WHERE ri.section_id = $1
-            ORDER BY ri.position ASC
-            "#,
-            sec.id
-        ).fetch_all(&state.pool).await?;
-
-        sections.push(Section {
-            id: sec.id as i32,
-            name: sec.name,
-            steps: step_rows.into_iter().map(|s| s.text).collect(),
-            ingredients: ing_rows
-                .into_iter()
-                .map(|i| RecipeIngredient {
-                    id: i.id as i32,
-                    ingredient: i.ingredient_id.map(|id| IngredientRef {
-                        id: id as i32,
-                        name: i.ingredient_name.unwrap_or_default(),
-                    }),
-                    text: i.text,
-                    amount: i.amount,
-                    amount_prefix: i.amount_prefix,
-                    unit: i.unit,
-                })
-                .collect(),
-        });
-    }
+    let sections = helpers::fetch_sections(r_id, &state.pool).await?;
 
     let recipe = Recipe {
         id: rec.id as i32,
@@ -212,48 +165,11 @@ async fn create_recipe(
         payload.size_number, payload.size_text, &payload.notes, payload.main_image.map(|i| i as i64)
     ).fetch_one(&mut *tx).await?.id;
 
-    for (pos, tag) in payload.tags.into_iter().enumerate() {
-        sqlx::query!(
-            "INSERT INTO recipe_tags (recipe_id, tag_id, position) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING",
-            rec_id, tag, pos as i32
-        ).execute(&mut *tx).await?;
-    }
-
-    for (pos, img) in payload.images.into_iter().enumerate() {
-        sqlx::query!(
-            "INSERT INTO recipe_images (recipe_id, image_id, position) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING",
-            rec_id, img as i64, pos as i32
-        ).execute(&mut *tx).await?;
-    }
+    helpers::insert_recipe_tags(rec_id, payload.tags, &mut tx).await?;
+    helpers::insert_recipe_images(rec_id, payload.images, &mut tx).await?;
 
     for (s_pos, sec) in payload.sections.into_iter().enumerate() {
-        let sec_id = sqlx::query!(
-            "INSERT INTO sections (recipe_id, name, position) VALUES ($1, $2, $3) RETURNING id",
-            rec_id,
-            sec.name,
-            s_pos as i32
-        )
-        .fetch_one(&mut *tx)
-        .await?
-        .id;
-
-        for (st_pos, step) in sec.steps.into_iter().enumerate() {
-            sqlx::query!(
-                "INSERT INTO steps (section_id, text, position) VALUES ($1, $2, $3)",
-                sec_id,
-                step,
-                st_pos as i32
-            )
-            .execute(&mut *tx)
-            .await?;
-        }
-
-        for (i_pos, ing) in sec.ingredients.into_iter().enumerate() {
-            sqlx::query!(
-                "INSERT INTO recipe_ingredients (section_id, ingredient_id, text, amount, amount_prefix, unit, position) VALUES ($1, $2, $3, $4, $5, $6, $7)",
-                sec_id, ing.ingredient.map(|i| i as i64), ing.text, ing.amount, ing.amount_prefix, ing.unit, i_pos as i32
-            ).execute(&mut *tx).await?;
-        }
+        helpers::insert_section(sec, rec_id, s_pos, &mut tx).await?;
     }
 
     tx.commit().await?;
@@ -277,81 +193,11 @@ async fn update_recipe(
 
     let mut tx = state.pool.begin().await?;
 
-    // Check permissions
-    let owner_check = sqlx::query!(
-        "SELECT owner_id, EXISTS(SELECT 1 FROM recipe_editors WHERE recipe_id = $1 AND user_id = $2) as is_editor FROM recipes WHERE id = $1",
-        r_id, u_id
-    ).fetch_optional(&mut *tx).await?
-        .ok_or_else(|| AppError::NotFound("Recipe not found".into()))?;
-
-    if owner_check.owner_id != u_id && !owner_check.is_editor.unwrap_or(false) {
-        return Err(AppError::Forbidden);
-    }
-
-    // Update main recipe
-    sqlx::query!(
-        r#"
-        UPDATE recipes SET
-            name = $2, source = $3, time_display = $4, work_minutes = $5, overall_minutes = $6,
-            size_number = $7, size_text = $8, notes = $9, main_image_id = $10, updated_at = now()
-        WHERE id = $1
-        "#,
-        r_id,
-        payload.name,
-        payload.source,
-        payload.time,
-        payload.work_minutes,
-        payload.overall_minutes,
-        payload.size_number,
-        payload.size_text,
-        &payload.notes,
-        payload.main_image.map(|i| i as i64)
-    )
-    .execute(&mut *tx)
-    .await?;
-
-    // Recreate tags, images, sections
-    sqlx::query!("DELETE FROM recipe_tags WHERE recipe_id = $1", r_id)
-        .execute(&mut *tx)
-        .await?;
-    for (pos, tag) in payload.tags.into_iter().enumerate() {
-        sqlx::query!("INSERT INTO recipe_tags (recipe_id, tag_id, position) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING", r_id, tag, pos as i32).execute(&mut *tx).await?;
-    }
-
-    sqlx::query!("DELETE FROM recipe_images WHERE recipe_id = $1", r_id)
-        .execute(&mut *tx)
-        .await?;
-    for (pos, img) in payload.images.into_iter().enumerate() {
-        sqlx::query!("INSERT INTO recipe_images (recipe_id, image_id, position) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING", r_id, img as i64, pos as i32).execute(&mut *tx).await?;
-    }
-
-    sqlx::query!("DELETE FROM sections WHERE recipe_id = $1", r_id)
-        .execute(&mut *tx)
-        .await?;
-    for (s_pos, sec) in payload.sections.into_iter().enumerate() {
-        let sec_id = sqlx::query!(
-            "INSERT INTO sections (recipe_id, name, position) VALUES ($1, $2, $3) RETURNING id",
-            r_id,
-            sec.name,
-            s_pos as i32
-        )
-        .fetch_one(&mut *tx)
-        .await?
-        .id;
-        for (st_pos, step) in sec.steps.into_iter().enumerate() {
-            sqlx::query!(
-                "INSERT INTO steps (section_id, text, position) VALUES ($1, $2, $3)",
-                sec_id,
-                step,
-                st_pos as i32
-            )
-            .execute(&mut *tx)
-            .await?;
-        }
-        for (i_pos, ing) in sec.ingredients.into_iter().enumerate() {
-            sqlx::query!("INSERT INTO recipe_ingredients (section_id, ingredient_id, text, amount, amount_prefix, unit, position) VALUES ($1, $2, $3, $4, $5, $6, $7)", sec_id, ing.ingredient.map(|i| i as i64), ing.text, ing.amount, ing.amount_prefix, ing.unit, i_pos as i32).execute(&mut *tx).await?;
-        }
-    }
+    helpers::check_can_edit(r_id, u_id, &mut tx).await?;
+    helpers::update_recipe_metadata(r_id, &payload, &mut tx).await?;
+    helpers::replace_recipe_tags(r_id, payload.tags, &mut tx).await?;
+    helpers::replace_recipe_images(r_id, payload.images, &mut tx).await?;
+    helpers::replace_recipe_sections(r_id, payload.sections, &mut tx).await?;
 
     tx.commit().await?;
 
@@ -398,38 +244,7 @@ async fn copy_recipe(
         .await?
         .0;
 
-    let create_payload = CreateRecipe {
-        name: format!("{} (Copy)", original.name),
-        tags: original.tags,
-        source: original.source,
-        time: original.time,
-        work_minutes: original.work_minutes,
-        overall_minutes: original.overall_minutes,
-        size_number: original.size_number,
-        size_text: original.size_text,
-        notes: original.notes,
-        main_image: original.main_image,
-        images: original.images,
-        sections: original
-            .sections
-            .into_iter()
-            .map(|s| crate::models::recipe::CreateSection {
-                name: s.name,
-                ingredients: s
-                    .ingredients
-                    .into_iter()
-                    .map(|i| crate::models::recipe::CreateRecipeIngredient {
-                        ingredient: i.ingredient.map(|ing| ing.id),
-                        text: i.text,
-                        amount: i.amount,
-                        amount_prefix: i.amount_prefix,
-                        unit: i.unit,
-                    })
-                    .collect(),
-                steps: s.steps,
-            })
-            .collect(),
-    };
+    let create_payload = helpers::create_recipe_copy(original);
 
     create_recipe(State(state), Extension(user_id), Json(create_payload)).await
 }
