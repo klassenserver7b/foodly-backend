@@ -15,7 +15,7 @@ pub fn ingredients_router() -> Router<AppState> {
 }
 
 async fn list_tags(State(state): State<AppState>) -> Result<Json<CatalogResponse<Tag>>, AppError> {
-    let records = sqlx::query!("SELECT id, svg FROM tags")
+    let records = sqlx::query!("SELECT id, svg FROM tags ORDER BY id ASC")
         .fetch_all(&state.pool)
         .await?;
 
@@ -33,7 +33,7 @@ async fn list_tags(State(state): State<AppState>) -> Result<Json<CatalogResponse
 async fn list_ingredients(
     State(state): State<AppState>,
 ) -> Result<Json<CatalogResponse<Ingredient>>, AppError> {
-    let records = sqlx::query!("SELECT id, name FROM ingredients")
+    let records = sqlx::query!("SELECT id, name FROM ingredients ORDER BY id ASC")
         .fetch_all(&state.pool)
         .await?;
 

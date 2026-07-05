@@ -30,7 +30,15 @@ pub(super) async fn insert_section(
         .await?;
     }
     for (i_pos, ing) in sec.ingredients.into_iter().enumerate() {
-        sqlx::query!("INSERT INTO recipe_ingredients (section_id, ingredient_id, text, amount, amount_prefix, unit, position) VALUES ($1, $2, $3, $4, $5, $6, $7)", sec_id, ing.ingredient.map(|i| i as i64), ing.text, ing.amount, ing.amount_prefix, ing.unit, i_pos as i32).execute(&mut **tx).await?;
+        if !ing.is_valid() {
+            return Err(AppError::Unprocessable(format!(
+                "Invalid ingredient: {:?}",
+                ing
+            )));
+        }
+
+        sqlx::query!("INSERT INTO recipe_ingredients (section_id, ingredient_id, text, amount, amount_prefix, unit, position) VALUES ($1, $2, $3, $4, $5, $6, $7)",
+            sec_id, ing.ingredient.map(|i| i as i64), ing.text, ing.amount, ing.amount_prefix, ing.unit, i_pos as i32).execute(&mut **tx).await?;
     }
     Ok(())
 }

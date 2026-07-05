@@ -132,6 +132,18 @@ pub struct CreateRecipeIngredient {
     pub unit: Option<String>,
 }
 
+impl CreateRecipeIngredient {
+    pub fn is_valid(&self) -> bool {
+        self.ingredient.is_some() || {
+            if let Some(text) = &self.text {
+                !text.trim().is_empty()
+            } else {
+                false
+            }
+        }
+    }
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CreateSection {
