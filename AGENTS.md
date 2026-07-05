@@ -6,7 +6,7 @@ Guidance for any Agent when working in this repository.
 
 **Never commit or push on your own.** 
 If you think it is time for a commit, generate a commit message and ask the user to do the commit.
-Never push on your own. The user decides for it's own if he wants to push.
+Never push on your own. The user decides for its own if he wants to push.
 (This isn't about deploys — pushing `main` currently deploys
 nothing. The user just wants to decide when work lands on the remote.)
 
@@ -22,7 +22,7 @@ If you ask the user to commit check `prek` first to comply with pre commit guide
 ## Pre-Commit
 
 If the user hasn't set up `prek` as a pre commit tool, ask him to do so and assist him by that.
-If you add important new features that live outside of the current prek checks, ask the user if they should be added.
+If you add important new features that live outside the current prek checks, ask the user if they should be added.
 Added them if approved.
 
 ## What this is

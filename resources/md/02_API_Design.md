@@ -26,10 +26,10 @@ List endpoints that can grow unbounded use **cursor-based pagination**:
 GET /api/v1/recipes?cursor=<opaque>&limit=20
 ```
 
-| Parameter | Type             | Default | Description                                       |
-|-----------|------------------|---------|---------------------------------------------------|
+| Parameter | Type             | Default | Description                                                        |
+|-----------|------------------|---------|--------------------------------------------------------------------|
 | `cursor`  | `string \| null` | `null`  | Opaque cursor from the previous response. Omit for the first page. |
-| `limit`   | `integer`        | `20`    | Max items per page (server caps at 100).          |
+| `limit`   | `integer`        | `20`    | Max items per page (server caps at 100).                           |
 
 Response wrapper:
 
@@ -234,10 +234,10 @@ Search for users by name (or partial name) for use in "invite to recipe" or "add
 
 **Query parameters:**
 
-| Parameter | Type     | Required | Description                                                  |
-|-----------|----------|----------|--------------------------------------------------------------|
-| `q`       | `string` | yes      | Search query (min 1 char). Matches against user `name` (case-insensitive, prefix/substring). |
-| `limit`   | `integer`| no       | Max results (default `10`, server cap `50`).                 |
+| Parameter | Type      | Required | Description                                                                                  |
+|-----------|-----------|----------|----------------------------------------------------------------------------------------------|
+| `q`       | `string`  | yes      | Search query (min 1 char). Matches against user `name` (case-insensitive, prefix/substring). |
+| `limit`   | `integer` | no       | Max results (default `10`, server cap `50`).                                                 |
 
 **Response `200 OK`:**
 ```json
@@ -875,19 +875,19 @@ server → client (event):    { type: string, payload?: unknown }   // no id
 
 ### Planned Message Types
 
-| Type               | Direction      | Description                                              |
-|--------------------|----------------|----------------------------------------------------------|
-| `me`               | request        | Get current user profile                                 |
-| `recipes.list`     | request        | List accessible recipes (preview data)                   |
-| `recipes.get`      | request        | Get full recipe by ID                                    |
-| `categories.list`  | request        | List user's categories                                   |
-| `tags.list`        | request        | List all tags                                            |
-| `ingredients.list` | request        | List ingredient catalog                                  |
-| `users.list`       | request        | List all users (for catalog/invite dropdown, deprecated in favor of `users.search`) |
-| `users.search`     | request        | Search users by name for invite dropdowns                |
-| `recipe.updated`   | server event   | A recipe the client is subscribed to was changed         |
-| `recipe.deleted`   | server event   | A recipe was deleted                                     |
-| `sync.submit`      | request        | Submit offline change backlog                            |
+| Type               | Direction    | Description                                                                         |
+|--------------------|--------------|-------------------------------------------------------------------------------------|
+| `me`               | request      | Get current user profile                                                            |
+| `recipes.list`     | request      | List accessible recipes (preview data)                                              |
+| `recipes.get`      | request      | Get full recipe by ID                                                               |
+| `categories.list`  | request      | List user's categories                                                              |
+| `tags.list`        | request      | List all tags                                                                       |
+| `ingredients.list` | request      | List ingredient catalog                                                             |
+| `users.list`       | request      | List all users (for catalog/invite dropdown, deprecated in favor of `users.search`) |
+| `users.search`     | request      | Search users by name for invite dropdowns                                           |
+| `recipe.updated`   | server event | A recipe the client is subscribed to was changed                                    |
+| `recipe.deleted`   | server event | A recipe was deleted                                                                |
+| `sync.submit`      | request      | Submit offline change backlog                                                       |
 
 ---
 
