@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n        SELECT\n            r.id, r.owner_id, r.name, r.source, r.time_display,\n            r.work_minutes, r.overall_minutes, r.size_number, r.size_text, r.main_image_id,\n            r.created_at, r.updated_at,\n            COALESCE((SELECT array_agg(user_id) FROM recipe_editors WHERE recipe_id = r.id), '{}') as \"editors!\",\n            COALESCE((SELECT array_agg(user_id) FROM recipe_viewers WHERE recipe_id = r.id), '{}') as \"viewers!\",\n            COALESCE((SELECT array_agg(tag_id ORDER BY position) FROM recipe_tags WHERE recipe_id = r.id), '{}') as \"tags!\"\n        FROM recipes r\n        WHERE r.owner_id = $1\n           OR EXISTS (SELECT 1 FROM recipe_editors e WHERE e.recipe_id = r.id AND e.user_id = $1)\n           OR EXISTS (SELECT 1 FROM recipe_viewers v WHERE v.recipe_id = r.id AND v.user_id = $1)\n        ORDER BY r.id ASC\n        LIMIT $2\n        ",
+  "query": "\n        SELECT\n            r.id, r.owner_id, r.name, r.source, r.time_display,\n            r.work_minutes, r.overall_minutes, r.size_number, r.size_text, r.main_image_id,\n            r.created_at, r.updated_at,\n            COALESCE((SELECT array_agg(user_id) FROM recipe_editors WHERE recipe_id = r.id), '{}') as \"editors!\",\n            COALESCE((SELECT array_agg(user_id) FROM recipe_viewers WHERE recipe_id = r.id), '{}') as \"viewers!\",\n            COALESCE((SELECT array_agg(tag_id ORDER BY position) FROM recipe_tags WHERE recipe_id = r.id), '{}') as \"tags!\"\n        FROM recipes r\n        WHERE (r.owner_id = $1\n           OR EXISTS (SELECT 1 FROM recipe_editors e WHERE e.recipe_id = r.id AND e.user_id = $1)\n           OR EXISTS (SELECT 1 FROM recipe_viewers v WHERE v.recipe_id = r.id AND v.user_id = $1))\n          AND ($3::bigint IS NULL OR r.id > $3)\n        ORDER BY r.id ASC\n        LIMIT $2\n        ",
   "describe": {
     "columns": [
       {
@@ -157,6 +157,7 @@
     "parameters": {
       "Left": [
         "Int8",
+        "Int8",
         "Int8"
       ]
     },
@@ -178,5 +179,5 @@
       null
     ]
   },
-  "hash": "c3bc5bb987e092fda8fb6f028eb0dbb7b28c599fd68888bea9a265c2df33c9a3"
+  "hash": "f367f3fd9977720a70274a378164c432e57d2a7933fc7b24bd105d12b0fee81d"
 }

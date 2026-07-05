@@ -19,6 +19,7 @@ pub enum AppError {
     NotFound(String),
     Forbidden,
     Unprocessable(String),
+    Conflict(String),
     Internal(anyhow::Error),
 }
 
@@ -34,6 +35,7 @@ impl IntoResponse for AppError {
             AppError::Unprocessable(msg) => {
                 (StatusCode::UNPROCESSABLE_ENTITY, "UNPROCESSABLE", msg)
             }
+            AppError::Conflict(msg) => (StatusCode::CONFLICT, "CONFLICT", msg),
             AppError::Internal(err) => {
                 eprintln!("Internal error: {:?}", err);
                 (
@@ -63,15 +65,21 @@ impl From<anyhow::Error> for AppError {
 
 impl From<sqlx::Error> for AppError {
     fn from(err: sqlx::Error) -> Self {
+        if matches!(err, sqlx::Error::RowNotFound) {
+            return Self::NotFound("Resource not found".into());
+        }
+
         if let sqlx::Error::Database(db_err) = &err
             && let Some(code) = db_err.code()
         {
             // Postgres error codes: https://www.postgresql.org/docs/current/errcodes-appendix.html
-            if code.as_ref() == "23503" {
-                return Self::Unprocessable("Invalid reference".into());
-            }
-            if code.as_ref() == "23505" {
-                return Self::Unprocessable("Duplicate value".into());
+            match code.as_ref() {
+                "22001" => return Self::Unprocessable("Value too long for column".into()),
+                "23502" => return Self::Unprocessable("Missing required field".into()),
+                "23503" => return Self::Unprocessable("Invalid reference".into()),
+                "23505" => return Self::Conflict("Duplicate value".into()),
+                "23514" => return Self::Unprocessable("Check constraint violation".into()),
+                _ => {}
             }
         }
         Self::Internal(err.into())
