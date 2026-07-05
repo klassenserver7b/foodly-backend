@@ -60,9 +60,9 @@ async fn main() -> anyhow::Result<()> {
 }
 
 async fn auth_middleware(mut req: Request, next: Next) -> Result<Response, StatusCode> {
-    // Mock Authentication: We just require SOME Bearer token.
-    // If it's there, we assign user_id = 1.
-    // If not, we still assign user_id = 1 but maybe in a real app we'd return 401.
+    // Mock Authentication: require a Bearer token.
+    // If it's present and begins with "Bearer ", we assign user_id = 1.
+    // Otherwise we return 401 Unauthorized.
     let auth_header = req.headers().get(header::AUTHORIZATION);
 
     // For this mock, we will just assume user 1 is logged in if the token is somewhat valid,

@@ -44,7 +44,15 @@ async fn list_recipes(
     let limit = query.limit.unwrap_or(20).min(100) as i64;
     let u_id = user_id as i64;
 
-    let records = sqlx::query!(
+    let cursor_id: Option<i64> = match &query.cursor {
+        Some(c) => Some(
+            c.parse()
+                .map_err(|_| AppError::Unprocessable("Invalid cursor".into()))?,
+        ),
+        None => None,
+    };
+
+    let mut records = sqlx::query!(
         r#"
         SELECT
             r.id, r.owner_id, r.name, r.source, r.time_display,
@@ -54,14 +62,25 @@ async fn list_recipes(
             COALESCE((SELECT array_agg(user_id) FROM recipe_viewers WHERE recipe_id = r.id), '{}') as "viewers!",
             COALESCE((SELECT array_agg(tag_id ORDER BY position) FROM recipe_tags WHERE recipe_id = r.id), '{}') as "tags!"
         FROM recipes r
-        WHERE r.owner_id = $1
+        WHERE (r.owner_id = $1
            OR EXISTS (SELECT 1 FROM recipe_editors e WHERE e.recipe_id = r.id AND e.user_id = $1)
-           OR EXISTS (SELECT 1 FROM recipe_viewers v WHERE v.recipe_id = r.id AND v.user_id = $1)
+           OR EXISTS (SELECT 1 FROM recipe_viewers v WHERE v.recipe_id = r.id AND v.user_id = $1))
+          AND ($3::bigint IS NULL OR r.id > $3)
         ORDER BY r.id ASC
         LIMIT $2
         "#,
-        u_id, limit
+        u_id, limit + 1, cursor_id
     ).fetch_all(&state.pool).await?;
+
+    let has_more = records.len() > limit as usize;
+    if has_more {
+        records.pop();
+    }
+
+    let mut next_cursor = None;
+    if let Some(last) = records.last() {
+        next_cursor = Some(last.id.to_string());
+    }
 
     let mut data = Vec::with_capacity(records.len());
     for rec in records {
@@ -85,7 +104,10 @@ async fn list_recipes(
         });
     }
 
-    Ok(Json(PaginatedResponse { data, cursor: None }))
+    Ok(Json(PaginatedResponse {
+        data,
+        cursor: if has_more { next_cursor } else { None },
+    }))
 }
 
 async fn get_recipe(

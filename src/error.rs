@@ -63,6 +63,17 @@ impl From<anyhow::Error> for AppError {
 
 impl From<sqlx::Error> for AppError {
     fn from(err: sqlx::Error) -> Self {
+        if let sqlx::Error::Database(db_err) = &err
+            && let Some(code) = db_err.code()
+        {
+            // Postgres error codes: https://www.postgresql.org/docs/current/errcodes-appendix.html
+            if code.as_ref() == "23503" {
+                return Self::Unprocessable("Invalid reference".into());
+            }
+            if code.as_ref() == "23505" {
+                return Self::Unprocessable("Duplicate value".into());
+            }
+        }
         Self::Internal(err.into())
     }
 }
