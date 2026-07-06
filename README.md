@@ -46,14 +46,17 @@ To get a local development environment running with mock data, follow these step
    ```bash
    docker compose up -d
    ```
+2. **Setup Tables:**
+   `cd ./src/db/migrations` an then run the follwing inside this directory (creates the tables) `for file in ./*; do [ -f "$file" ] && docker exec -i foodly_postgres psql -U postgres -d foodly < $file; done`
+   This is usally done by the server directly but due to the structure of sqlx you cant do a `cargo run` because it won't compile without the required tables.
 
-2. **Seed the database (Optional):**
+3. **Seed the database (Optional):**
    If you want to populate the database with mock recipes and users to start testing immediately, you can apply the provided seed script directly into the running Postgres container:
    ```bash
    docker exec -i foodly_postgres psql -U postgres -d foodly < resources/mock/seed.sql
    ```
 
-3. **Run the server:**
+4. **Run the server:**
    Ensure you have configured `.env` correctly (a `.env.example` is provided), then run the application:
    ```bash
    cargo run
