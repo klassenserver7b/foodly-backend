@@ -172,3 +172,30 @@ pub struct CreateRecipe {
     #[serde(default)]
     pub sections: Vec<CreateSection>,
 }
+
+#[derive(Debug, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct RecipeSearchQuery {
+    pub filters: Option<RecipeFilters>,
+    pub sort: Option<RecipeSort>,
+    pub page: Option<i64>,
+    pub limit: Option<i64>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RecipeFilters {
+    pub categories: Option<Vec<i64>>,
+    pub tags: Option<Vec<String>>,
+    pub ingredients: Option<Vec<i64>>,
+    pub max_work_time: Option<i32>,
+    pub access_rights: Option<Vec<String>>,
+    pub share_states: Option<Vec<String>>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RecipeSort {
+    pub field: String,
+    pub order: String,
+}

@@ -4,7 +4,7 @@
 //! and copying recipes using PostgreSQL via `sqlx`.
 mod helpers;
 
-use crate::models::recipe::{CreateRecipe, Recipe, RecipePreview};
+use crate::models::recipe::{CreateRecipe, Recipe, RecipePreview, RecipeSearchQuery};
 use crate::{AppState, error::AppError};
 use axum::{
     Extension, Json, Router,
@@ -12,11 +12,13 @@ use axum::{
     routing::{get, post},
 };
 use serde::{Deserialize, Serialize};
+use sqlx::Row;
 
 /// Configures and returns the Axum router for recipe endpoints.
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/", get(list_recipes).post(create_recipe))
+        .route("/search", post(search_recipes))
         .route(
             "/{id}",
             get(get_recipe).put(update_recipe).delete(delete_recipe),
@@ -269,4 +271,241 @@ async fn copy_recipe(
     let create_payload = helpers::create_recipe_copy(original);
 
     create_recipe(State(state), Extension(user_id), Json(create_payload)).await
+}
+
+async fn search_recipes(
+    State(state): State<AppState>,
+    Extension(user_id): Extension<i32>,
+    query: Option<Json<RecipeSearchQuery>>,
+) -> Result<Json<PaginatedResponse<RecipePreview>>, AppError> {
+    let query = query.map(|q| q.0).unwrap_or_default();
+    let u_id = user_id as i64;
+    let limit = query.limit.unwrap_or(20).min(100);
+    let page = query.page.unwrap_or(1).max(1);
+    let offset = (page - 1) * limit;
+
+    let mut qb = sqlx::QueryBuilder::new(
+        r#"
+        SELECT
+            r.id, r.owner_id, r.name, r.source, r.time_display,
+            r.work_minutes, r.overall_minutes, r.size_number, r.size_text, r.main_image_id,
+            r.created_at, r.updated_at,
+            COALESCE((SELECT array_agg(user_id) FROM recipe_editors WHERE recipe_id = r.id), '{}') as editors,
+            COALESCE((SELECT array_agg(user_id) FROM recipe_viewers WHERE recipe_id = r.id), '{}') as viewers,
+            COALESCE((SELECT array_agg(tag_id ORDER BY position) FROM recipe_tags WHERE recipe_id = r.id), '{}') as tags,
+            COALESCE((SELECT AVG(rating) FROM user_ratings WHERE recipe_id = r.id), 0.0) as avg_rating
+        FROM recipes r
+        WHERE 1=1
+        "#,
+    );
+
+    let has_access = query
+        .filters
+        .as_ref()
+        .and_then(|f| f.access_rights.as_ref())
+        .map(|v| !v.is_empty())
+        .unwrap_or(false);
+    let has_shares = query
+        .filters
+        .as_ref()
+        .and_then(|f| f.share_states.as_ref())
+        .map(|v| !v.is_empty())
+        .unwrap_or(false);
+
+    if has_access || has_shares {
+        qb.push(" AND (1=0");
+
+        if let Some(accs) = query.filters.as_ref().unwrap().access_rights.as_ref() {
+            for a in accs {
+                match a.as_str() {
+                    "owner" => {
+                        qb.push(" OR r.owner_id = ");
+                        qb.push_bind(u_id);
+                    }
+                    "editor" => {
+                        qb.push(" OR EXISTS (SELECT 1 FROM recipe_editors e WHERE e.recipe_id = r.id AND e.user_id = ");
+                        qb.push_bind(u_id);
+                        qb.push(")");
+                    }
+                    "viewer" => {
+                        qb.push(" OR EXISTS (SELECT 1 FROM recipe_viewers v WHERE v.recipe_id = r.id AND v.user_id = ");
+                        qb.push_bind(u_id);
+                        qb.push(")");
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        if let Some(shs) = query.filters.as_ref().unwrap().share_states.as_ref() {
+            for s in shs {
+                match s.as_str() {
+                    "private" => {
+                        qb.push(" OR (r.owner_id = ");
+                        qb.push_bind(u_id);
+                        qb.push(" AND NOT EXISTS (SELECT 1 FROM recipe_editors WHERE recipe_id = r.id) AND NOT EXISTS (SELECT 1 FROM recipe_viewers WHERE recipe_id = r.id))");
+                    }
+                    "shared" => {
+                        qb.push(" OR EXISTS (SELECT 1 FROM recipe_viewers WHERE recipe_id = r.id)");
+                    }
+                    "collaborative" => {
+                        qb.push(" OR EXISTS (SELECT 1 FROM recipe_editors WHERE recipe_id = r.id)");
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        qb.push(")");
+
+        qb.push(" AND (r.owner_id = ");
+        qb.push_bind(u_id);
+        qb.push(
+            " OR EXISTS (SELECT 1 FROM recipe_editors e WHERE e.recipe_id = r.id AND e.user_id = ",
+        );
+        qb.push_bind(u_id);
+        qb.push(")");
+        qb.push(
+            " OR EXISTS (SELECT 1 FROM recipe_viewers v WHERE v.recipe_id = r.id AND v.user_id = ",
+        );
+        qb.push_bind(u_id);
+        qb.push("))");
+    } else {
+        qb.push(" AND (r.owner_id = ");
+        qb.push_bind(u_id);
+        qb.push(
+            " OR EXISTS (SELECT 1 FROM recipe_editors e WHERE e.recipe_id = r.id AND e.user_id = ",
+        );
+        qb.push_bind(u_id);
+        qb.push(")");
+        qb.push(
+            " OR EXISTS (SELECT 1 FROM recipe_viewers v WHERE v.recipe_id = r.id AND v.user_id = ",
+        );
+        qb.push_bind(u_id);
+        qb.push("))");
+    }
+
+    if let Some(f) = &query.filters {
+        if let Some(cats) = &f.categories
+            && !cats.is_empty()
+        {
+            qb.push(" AND (SELECT count(DISTINCT ucr.category_id) FROM user_category_recipes ucr WHERE ucr.recipe_id = r.id AND ucr.category_id = ANY(");
+            qb.push_bind(cats);
+            qb.push(")) = ");
+            qb.push(cats.len().to_string());
+        }
+        if let Some(tags) = &f.tags
+            && !tags.is_empty()
+        {
+            qb.push(" AND (SELECT count(DISTINCT rt.tag_id) FROM recipe_tags rt WHERE rt.recipe_id = r.id AND rt.tag_id = ANY(");
+            qb.push_bind(tags);
+            qb.push(")) = ");
+            qb.push(tags.len().to_string());
+        }
+        if let Some(ings) = &f.ingredients
+            && !ings.is_empty()
+        {
+            qb.push(" AND (SELECT count(DISTINCT ri.ingredient_id) FROM sections s JOIN recipe_ingredients ri ON s.id = ri.section_id WHERE s.recipe_id = r.id AND ri.ingredient_id = ANY(");
+            qb.push_bind(ings);
+            qb.push(")) = ");
+            qb.push(ings.len().to_string());
+        }
+        if let Some(max_time) = f.max_work_time {
+            qb.push(" AND r.work_minutes <= ");
+            qb.push_bind(max_time);
+        }
+    }
+
+    if let Some(s) = &query.sort {
+        let order = if s.order.to_lowercase() == "desc" {
+            "DESC NULLS LAST"
+        } else {
+            "ASC NULLS LAST"
+        };
+        match s.field.as_str() {
+            "name" => {
+                qb.push(" ORDER BY r.name ");
+                qb.push(order);
+            }
+            "worktime" | "work_time" => {
+                qb.push(" ORDER BY r.work_minutes ");
+                qb.push(order);
+            }
+            "totaltime" | "total_time" => {
+                qb.push(" ORDER BY r.overall_minutes ");
+                qb.push(order);
+            }
+            "rating" => {
+                qb.push(" ORDER BY avg_rating ");
+                qb.push(order);
+            }
+            _ => {
+                qb.push(" ORDER BY r.id ASC");
+            }
+        }
+    } else {
+        qb.push(" ORDER BY r.id ASC");
+    }
+
+    qb.push(" LIMIT ");
+    qb.push_bind(limit + 1);
+    qb.push(" OFFSET ");
+    qb.push_bind(offset);
+
+    let mut records = qb.build().fetch_all(&state.pool).await?;
+
+    let has_more = records.len() > limit as usize;
+    if has_more {
+        records.pop();
+    }
+
+    let mut data = Vec::with_capacity(records.len());
+    for rec in records {
+        let id: i64 = rec.try_get("id")?;
+        let owner: i64 = rec.try_get("owner_id")?;
+        let name: String = rec.try_get("name")?;
+        let source: Option<String> = rec.try_get("source")?;
+        let time_display: Option<String> = rec.try_get("time_display")?;
+        let work_minutes: Option<i32> = rec.try_get("work_minutes")?;
+        let overall_minutes: Option<i32> = rec.try_get("overall_minutes")?;
+        let size_number: Option<i32> = rec.try_get("size_number")?;
+        let size_text: Option<String> = rec.try_get("size_text")?;
+        let main_image_id: Option<i64> = rec.try_get("main_image_id")?;
+
+        let created_at: sqlx::types::chrono::DateTime<sqlx::types::chrono::Utc> =
+            rec.try_get("created_at")?;
+        let updated_at: sqlx::types::chrono::DateTime<sqlx::types::chrono::Utc> =
+            rec.try_get("updated_at")?;
+
+        let editors: Vec<i64> = rec.try_get("editors")?;
+        let viewers: Vec<i64> = rec.try_get("viewers")?;
+        let tags: Vec<String> = rec.try_get("tags")?;
+
+        data.push(RecipePreview {
+            id: id as i32,
+            owner: owner as i32,
+            editors: editors.into_iter().map(|v| v as i32).collect(),
+            viewers: viewers.into_iter().map(|v| v as i32).collect(),
+            name,
+            tags,
+            source,
+            rating: vec![],
+            time: time_display,
+            work_minutes,
+            overall_minutes,
+            size_number,
+            size_text,
+            main_image: main_image_id.map(|id| id as i32),
+            created_at: Some(created_at.to_rfc3339()),
+            updated_at: Some(updated_at.to_rfc3339()),
+        });
+    }
+
+    let cursor = if has_more {
+        Some((page + 1).to_string())
+    } else {
+        None
+    };
+
+    Ok(Json(PaginatedResponse { data, cursor }))
 }
