@@ -20,15 +20,15 @@ and a consistent JSON error envelope.
 
 ### Pagination
 
-List endpoints that can grow unbounded use **cursor-based pagination**:
+List endpoints that can grow unbounded (like recipes) use **offset-based pagination** via URL query parameters:
 
 ```
-GET /api/v1/recipes?cursor=<opaque>&limit=20
+?page=1&limit=20
 ```
 
 | Parameter | Type             | Default | Description                                                        |
 |-----------|------------------|---------|--------------------------------------------------------------------|
-| `cursor`  | `string \| null` | `null`  | Opaque cursor from the previous response. Omit for the first page. |
+| `page`    | `integer`        | `1`     | The page number to fetch (1-indexed).                              |
 | `limit`   | `integer`        | `20`    | Max items per page (server caps at 100).                           |
 
 Response wrapper:
@@ -36,7 +36,7 @@ Response wrapper:
 ```json
 {
   "data": [ ... ],
-  "cursor": "eyJpZCI6NDJ9"   // null when no more pages
+  "cursor": "2"   // The next page number as a string, or null when no more pages
 }
 ```
 
@@ -323,11 +323,11 @@ Search and list recipes accessible to the authenticated user (owned + shared as 
       "updatedAt": "2026-03-15T09:30:00Z"
     }
   ],
-  "cursor": "eyJpZCI6MX0"
+  "cursor": "2"
 }
 ```
 
-> **Scope:** The backend **only returns recipes where the user is `owner`, `editor`, or `viewer`**. The frontend does not need to filter by access itself.
+> **Scope:** The backend **only returns recipes where the user is `owner`, `editor`, or `viewer`**. The frontend does not need to filter by access itself. The `cursor` in the response represents the next page number as a string, or `null` if there are no more pages.
 
 ---
 

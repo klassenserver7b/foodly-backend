@@ -462,3 +462,350 @@ async fn search_recipes(
     let res = fetch_recipes(&state, user_id, pagination, query).await?;
     Ok(Json(res))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::recipe::CreateRecipe;
+    use axum::extract::{Path, Query, State};
+    use axum::{Extension, Json};
+    use sqlx::PgPool;
+
+    #[sqlx::test(migrations = "src/db/migrations")]
+    async fn test_recipe_lifecycle(pool: PgPool) {
+        let state = State(AppState { pool: pool.clone() });
+
+        let user_id_i64 = sqlx::query!("INSERT INTO users (name, email, password_hash) VALUES ('test', 'test@example.com', 'hash') RETURNING id")
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+            .id;
+
+        let user_id = Extension(user_id_i64 as i32);
+
+        // 1. Create a recipe
+        let create_payload = CreateRecipe {
+            name: "Test Recipe".to_string(),
+            tags: vec![],
+            source: None,
+            time: None,
+            work_minutes: Some(15),
+            overall_minutes: Some(30),
+            size_number: Some(2),
+            size_text: Some("portions".to_string()),
+            notes: vec![],
+            main_image: None,
+            images: vec![],
+            sections: vec![],
+        };
+
+        let created_recipe = create_recipe(state.clone(), user_id, Json(create_payload))
+            .await
+            .expect("Failed to create recipe")
+            .0;
+
+        assert_eq!(created_recipe.name, "Test Recipe");
+        assert_eq!(created_recipe.owner, user_id_i64 as i32);
+        let r_id = created_recipe.id;
+
+        // 2. Get the recipe
+        let fetched = get_recipe(state.clone(), user_id, Path(r_id))
+            .await
+            .expect("Failed to get recipe")
+            .0;
+        assert_eq!(fetched.id, r_id);
+        assert_eq!(fetched.name, "Test Recipe");
+
+        // 3. Update the recipe
+        let update_payload = CreateRecipe {
+            name: "Updated Recipe".to_string(),
+            tags: vec![],
+            source: None,
+            time: None,
+            work_minutes: Some(20),
+            overall_minutes: Some(40),
+            size_number: Some(4),
+            size_text: Some("portions".to_string()),
+            notes: vec![],
+            main_image: None,
+            images: vec![],
+            sections: vec![],
+        };
+        let updated = update_recipe(state.clone(), user_id, Path(r_id), Json(update_payload))
+            .await
+            .expect("Failed to update recipe")
+            .0;
+        assert_eq!(updated.name, "Updated Recipe");
+
+        // 4. List recipes
+        let list = list_recipes(
+            state.clone(),
+            user_id,
+            Query(PaginationQuery {
+                page: None,
+                limit: None,
+            }),
+        )
+        .await
+        .expect("Failed to list recipes")
+        .0;
+        assert!(!list.data.is_empty());
+
+        // 5. Delete the recipe
+        let _ = delete_recipe(state.clone(), user_id, Path(r_id))
+            .await
+            .expect("Failed to delete recipe");
+
+        // 6. Verify deletion
+        let err = get_recipe(state.clone(), user_id, Path(r_id)).await;
+        assert!(err.is_err());
+    }
+
+    #[sqlx::test(migrations = "src/db/migrations")]
+    async fn test_recipe_pagination(pool: PgPool) {
+        let state = State(AppState { pool: pool.clone() });
+
+        let user_id_i64 = sqlx::query!("INSERT INTO users (name, email, password_hash) VALUES ('test_pag', 'pag@example.com', 'hash') RETURNING id")
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+            .id;
+        let user_id = Extension(user_id_i64 as i32);
+
+        // Insert 25 recipes
+        for i in 1..=25 {
+            let create_payload = CreateRecipe {
+                name: format!("Recipe {}", i),
+                tags: vec![],
+                source: None,
+                time: None,
+                work_minutes: Some(15),
+                overall_minutes: Some(30),
+                size_number: Some(2),
+                size_text: Some("portions".to_string()),
+                notes: vec![],
+                main_image: None,
+                images: vec![],
+                sections: vec![],
+            };
+            let _ = create_recipe(state.clone(), user_id, Json(create_payload))
+                .await
+                .expect("Failed to create recipe");
+        }
+
+        // Test page 1, limit 10
+        let p1 = list_recipes(
+            state.clone(),
+            user_id,
+            Query(PaginationQuery {
+                page: Some(1),
+                limit: Some(10),
+            }),
+        )
+        .await
+        .unwrap()
+        .0;
+        assert_eq!(p1.data.len(), 10);
+        assert_eq!(p1.cursor, Some("2".to_string()));
+
+        // Test page 2, limit 10
+        let p2 = list_recipes(
+            state.clone(),
+            user_id,
+            Query(PaginationQuery {
+                page: Some(2),
+                limit: Some(10),
+            }),
+        )
+        .await
+        .unwrap()
+        .0;
+        assert_eq!(p2.data.len(), 10);
+        assert_eq!(p2.cursor, Some("3".to_string()));
+
+        // Test page 3, limit 10 (should only have 5)
+        let p3 = list_recipes(
+            state.clone(),
+            user_id,
+            Query(PaginationQuery {
+                page: Some(3),
+                limit: Some(10),
+            }),
+        )
+        .await
+        .unwrap()
+        .0;
+        assert_eq!(p3.data.len(), 5);
+        assert_eq!(p3.cursor, None);
+    }
+
+    #[sqlx::test(migrations = "src/db/migrations")]
+    async fn test_recipe_permissions(pool: PgPool) {
+        let state = State(AppState { pool: pool.clone() });
+
+        let u1_id = sqlx::query!("INSERT INTO users (name, email, password_hash) VALUES ('user1', 'u1@example.com', 'hash') RETURNING id")
+            .fetch_one(&pool).await.unwrap().id;
+        let u2_id = sqlx::query!("INSERT INTO users (name, email, password_hash) VALUES ('user2', 'u2@example.com', 'hash') RETURNING id")
+            .fetch_one(&pool).await.unwrap().id;
+
+        let user1 = Extension(u1_id as i32);
+        let user2 = Extension(u2_id as i32);
+
+        // User 1 creates a recipe
+        let payload = CreateRecipe {
+            name: "User1 Recipe".to_string(),
+            tags: vec![],
+            source: None,
+            time: None,
+            work_minutes: None,
+            overall_minutes: None,
+            size_number: None,
+            size_text: None,
+            notes: vec![],
+            main_image: None,
+            images: vec![],
+            sections: vec![],
+        };
+        let r1 = create_recipe(state.clone(), user1, Json(payload))
+            .await
+            .unwrap()
+            .0;
+
+        // User 2 tries to read it - should fail (forbidden)
+        let err = get_recipe(state.clone(), user2, Path(r1.id)).await;
+        assert!(matches!(err, Err(AppError::Forbidden)));
+
+        // User 2 tries to update it - should fail
+        let payload2 = CreateRecipe {
+            name: "User2 Update".to_string(),
+            tags: vec![],
+            source: None,
+            time: None,
+            work_minutes: None,
+            overall_minutes: None,
+            size_number: None,
+            size_text: None,
+            notes: vec![],
+            main_image: None,
+            images: vec![],
+            sections: vec![],
+        };
+        let err = update_recipe(state.clone(), user2, Path(r1.id), Json(payload2)).await;
+        assert!(matches!(err, Err(AppError::Forbidden)));
+    }
+
+    #[sqlx::test(migrations = "src/db/migrations")]
+    async fn test_recipe_copy(pool: PgPool) {
+        let state = State(AppState { pool: pool.clone() });
+        let user_id_i64 = sqlx::query!("INSERT INTO users (name, email, password_hash) VALUES ('copy_u', 'copy@example.com', 'hash') RETURNING id")
+            .fetch_one(&pool).await.unwrap().id;
+        let user_id = Extension(user_id_i64 as i32);
+
+        let payload = CreateRecipe {
+            name: "Original".to_string(),
+            tags: vec![],
+            source: None,
+            time: None,
+            work_minutes: Some(10),
+            overall_minutes: None,
+            size_number: None,
+            size_text: None,
+            notes: vec!["Test note".to_string()],
+            main_image: None,
+            images: vec![],
+            sections: vec![],
+        };
+        let orig = create_recipe(state.clone(), user_id, Json(payload))
+            .await
+            .unwrap()
+            .0;
+
+        // Copy recipe
+        let copied = copy_recipe(state.clone(), user_id, Path(orig.id))
+            .await
+            .unwrap()
+            .0;
+
+        assert_ne!(orig.id, copied.id); // Different IDs
+        assert_eq!(copied.name, "Original (Copy)");
+        assert_eq!(copied.work_minutes, Some(10));
+        assert_eq!(copied.notes.len(), 1);
+        assert_eq!(copied.notes[0], "Test note");
+    }
+
+    #[sqlx::test(migrations = "src/db/migrations")]
+    async fn test_search_recipes(pool: PgPool) {
+        let state = State(AppState { pool: pool.clone() });
+        let user_id_i64 = sqlx::query!("INSERT INTO users (name, email, password_hash) VALUES ('search_u', 'search@example.com', 'hash') RETURNING id")
+            .fetch_one(&pool).await.unwrap().id;
+        let user_id = Extension(user_id_i64 as i32);
+
+        // Recipe 1: 15 mins
+        let r1 = CreateRecipe {
+            name: "Fast Recipe".to_string(),
+            tags: vec![],
+            source: None,
+            time: None,
+            work_minutes: Some(15),
+            overall_minutes: None,
+            size_number: None,
+            size_text: None,
+            notes: vec![],
+            main_image: None,
+            images: vec![],
+            sections: vec![],
+        };
+        let _ = create_recipe(state.clone(), user_id, Json(r1))
+            .await
+            .unwrap();
+
+        // Recipe 2: 45 mins
+        let r2 = CreateRecipe {
+            name: "Slow Recipe".to_string(),
+            tags: vec![],
+            source: None,
+            time: None,
+            work_minutes: Some(45),
+            overall_minutes: None,
+            size_number: None,
+            size_text: None,
+            notes: vec![],
+            main_image: None,
+            images: vec![],
+            sections: vec![],
+        };
+        let _ = create_recipe(state.clone(), user_id, Json(r2))
+            .await
+            .unwrap();
+
+        // Search max_work_time = 30
+        let filters = crate::models::recipe::RecipeFilters {
+            categories: None,
+            tags: None,
+            ingredients: None,
+            max_work_time: Some(30),
+            access_rights: None,
+            share_states: None,
+        };
+        let query = RecipeSearchQuery {
+            filters: Some(filters),
+            sort: None,
+        };
+
+        let res = search_recipes(
+            state.clone(),
+            user_id,
+            Query(PaginationQuery {
+                page: None,
+                limit: None,
+            }),
+            Some(Json(query)),
+        )
+        .await
+        .unwrap()
+        .0;
+
+        assert_eq!(res.data.len(), 1);
+        assert_eq!(res.data[0].name, "Fast Recipe");
+    }
+}

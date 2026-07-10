@@ -15,6 +15,7 @@ use serde_json::json;
 /// Wraps both explicit user-facing errors (like `NotFound`) and internal
 /// server errors (via `anyhow::Error`). Implements `IntoResponse` to
 /// serialize cleanly into a JSON error body.
+#[derive(Debug)]
 pub enum AppError {
     NotFound(String),
     Forbidden,

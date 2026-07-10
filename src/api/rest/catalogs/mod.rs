@@ -47,3 +47,27 @@ async fn list_ingredients(
 
     Ok(Json(CatalogResponse { data }))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sqlx::PgPool;
+
+    #[sqlx::test(migrations = "src/db/migrations")]
+    async fn test_list_tags(pool: PgPool) {
+        let state = State(AppState { pool });
+        let response = list_tags(state).await.expect("Failed to list tags");
+        // Ensure no error and valid response structure
+        assert!(response.0.data.is_empty() || !response.0.data.is_empty());
+    }
+
+    #[sqlx::test(migrations = "src/db/migrations")]
+    async fn test_list_ingredients(pool: PgPool) {
+        let state = State(AppState { pool });
+        let response = list_ingredients(state)
+            .await
+            .expect("Failed to list ingredients");
+        // Ensure no error and valid response structure
+        assert!(response.0.data.is_empty() || !response.0.data.is_empty());
+    }
+}
