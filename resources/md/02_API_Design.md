@@ -260,9 +260,42 @@ Search for users by name (or partial name) for use in "invite to recipe" or "add
 
 ### `GET /api/v1/recipes`
 
-List recipes accessible to the authenticated user (owned + shared as editor/viewer). Returns **preview data** — a subset of fields optimized for the list view. Sections, ingredients, steps, and notes are **not** included.
+Fetch a paginated list of all recipes accessible to the authenticated user. This is a fast, highly-cacheable endpoint designed for the initial catalog load. It internally uses the same logic as the search endpoint but accepts only pagination parameters in the query string.
 
-**Query parameters:** `cursor`, `limit` (see Pagination above).
+**Query parameters:**
+- `page` (integer, default: 1)
+- `limit` (integer, default: 20)
+
+**Response `200 OK`:** *(Returns the same paginated `RecipePreview` list structure as `POST /api/v1/recipes/search`)*
+
+---
+
+### `POST /api/v1/recipes/search`
+
+Search and list recipes accessible to the authenticated user (owned + shared as editor/viewer). Allows filtering by tags, categories, ingredients, max work time, access rights, and share states. Also supports dynamic sorting (e.g. by rating, name, total time) and uses offset-based pagination. Returns **preview data** — a subset of fields optimized for the list view. Sections, ingredients, steps, and notes are **not** included. If the request body is omitted or empty (`{}`), it behaves identically to a fetch-all endpoint.
+
+**Query parameters:**
+- `page` (integer, default: 1)
+- `limit` (integer, default: 20)
+
+**Request:**
+```json
+{
+  "filters": {
+    "categories": [1, 2],
+    "tags": ["Hauptgericht", "Vegan"],
+    "ingredients": [5],
+    "maxWorkTime": 30,
+    "accessRights": ["owner", "editor", "viewer"],
+    "shareStates": ["private", "shared", "collaborative"]
+  },
+  "sort": {
+    "field": "rating", // "name", "work_time", "total_time", "rating"
+    "order": "desc"    // "asc", "desc"
+  }
+}
+```
+*(All fields are optional. Filters use strict AND logic where arrays are provided.)*
 
 **Response `200 OK`:**
 ```json

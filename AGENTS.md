@@ -18,6 +18,8 @@ commits in this repo.
 Always use `cargo check` to validate your changes when you think they should compile.
 Use `cargo clippy` sometimes to stay close to rust guidelines.
 If you ask the user to commit check `prek` first to comply with pre commit guidelines
+If you changed API endpoints and their logic **start the server** and use test queries to check if they are working correctly.
+If unsure present the query to the user, let him run it and evaluate the results together.
 
 ## Pre-Commit
 
@@ -49,6 +51,8 @@ Consult `resources/md` for further information
 - **Unit Tests**: Place unit tests in the same file as the module being tested, inside a `#[cfg(test)] mod tests { ... }` block. Focus on testing domain logic and service functions.
 - **Integration Tests**: Place integration tests in the `tests/` directory at the project root.
 - **API Testing**: For API routes, use `tower::ServiceExt` (e.g., `app.oneshot(request)`) to bypass the network stack and test handlers directly. For database-dependent tests, ensure a dedicated test database is spun up and seeded before the test runs (or use `sqlx` test macros).
+ 
+If you are modifing code always evaluate if new tests are needed and wirte them if so.
 
 ## Commands
 
@@ -94,3 +98,7 @@ Everything that is a widely used struct / function should have rustdoc. If you a
 - `src/db/`: Database connection setup and `.sql` migration files
 - `src/models/`: Shared domain structs and database entities
 - `src/services/`: Core business logic (optional, as needed for complex flows)
+
+## Documentation
+- `resources/md` contains all docs and the current state of the project.
+If endpoints oder important decisions are changed, always update the docs to keep them aligned with the current codebase

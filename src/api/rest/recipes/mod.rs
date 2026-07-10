@@ -31,88 +31,14 @@ pub fn router() -> Router<AppState> {
 
 #[derive(Deserialize)]
 pub struct PaginationQuery {
-    pub cursor: Option<String>,
-    pub limit: Option<usize>,
+    pub page: Option<i64>,
+    pub limit: Option<i64>,
 }
 
 #[derive(Serialize)]
 pub struct PaginatedResponse<T> {
     pub data: Vec<T>,
     pub cursor: Option<String>,
-}
-
-async fn list_recipes(
-    State(state): State<AppState>,
-    Extension(user_id): Extension<i32>,
-    Query(query): Query<PaginationQuery>,
-) -> Result<Json<PaginatedResponse<RecipePreview>>, AppError> {
-    let limit = query.limit.unwrap_or(20).min(100) as i64;
-    let u_id = user_id as i64;
-
-    let cursor_id: Option<i64> = match &query.cursor {
-        Some(c) => Some(
-            c.parse()
-                .map_err(|_| AppError::Unprocessable("Invalid cursor".into()))?,
-        ),
-        None => None,
-    };
-
-    let mut records = sqlx::query!(
-        r#"
-        SELECT
-            r.id, r.owner_id, r.name, r.source, r.time_display,
-            r.work_minutes, r.overall_minutes, r.size_number, r.size_text, r.main_image_id,
-            r.created_at, r.updated_at,
-            COALESCE((SELECT array_agg(user_id) FROM recipe_editors WHERE recipe_id = r.id), '{}') as "editors!",
-            COALESCE((SELECT array_agg(user_id) FROM recipe_viewers WHERE recipe_id = r.id), '{}') as "viewers!",
-            COALESCE((SELECT array_agg(tag_id ORDER BY position) FROM recipe_tags WHERE recipe_id = r.id), '{}') as "tags!"
-        FROM recipes r
-        WHERE (r.owner_id = $1
-           OR EXISTS (SELECT 1 FROM recipe_editors e WHERE e.recipe_id = r.id AND e.user_id = $1)
-           OR EXISTS (SELECT 1 FROM recipe_viewers v WHERE v.recipe_id = r.id AND v.user_id = $1))
-          AND ($3::bigint IS NULL OR r.id > $3)
-        ORDER BY r.id ASC
-        LIMIT $2
-        "#,
-        u_id, limit + 1, cursor_id
-    ).fetch_all(&state.pool).await?;
-
-    let has_more = records.len() > limit as usize;
-    if has_more {
-        records.pop();
-    }
-
-    let mut next_cursor = None;
-    if let Some(last) = records.last() {
-        next_cursor = Some(last.id.to_string());
-    }
-
-    let mut data = Vec::with_capacity(records.len());
-    for rec in records {
-        data.push(RecipePreview {
-            id: rec.id as i32,
-            owner: rec.owner_id as i32,
-            editors: rec.editors.into_iter().map(|v| v as i32).collect(),
-            viewers: rec.viewers.into_iter().map(|v| v as i32).collect(),
-            name: rec.name,
-            tags: rec.tags,
-            source: rec.source,
-            rating: vec![],
-            time: rec.time_display,
-            work_minutes: rec.work_minutes,
-            overall_minutes: rec.overall_minutes,
-            size_number: rec.size_number,
-            size_text: rec.size_text,
-            main_image: rec.main_image_id.map(|id| id as i32),
-            created_at: Some(rec.created_at.to_rfc3339()),
-            updated_at: Some(rec.updated_at.to_rfc3339()),
-        });
-    }
-
-    Ok(Json(PaginatedResponse {
-        data,
-        cursor: if has_more { next_cursor } else { None },
-    }))
 }
 
 async fn get_recipe(
@@ -275,15 +201,15 @@ async fn copy_recipe(
     create_recipe(State(state), Extension(user_id), Json(create_payload)).await
 }
 
-async fn search_recipes(
-    State(state): State<AppState>,
-    Extension(user_id): Extension<i32>,
-    query: Option<Json<RecipeSearchQuery>>,
-) -> Result<Json<PaginatedResponse<RecipePreview>>, AppError> {
-    let query = query.map(|q| q.0).unwrap_or_default();
+async fn fetch_recipes(
+    state: &AppState,
+    user_id: i32,
+    pagination: PaginationQuery,
+    query: RecipeSearchQuery,
+) -> Result<PaginatedResponse<RecipePreview>, AppError> {
     let u_id = user_id as i64;
-    let limit = query.limit.unwrap_or(20).min(100);
-    let page = query.page.unwrap_or(1).max(1);
+    let limit = pagination.limit.unwrap_or(20).min(100);
+    let page = pagination.page.unwrap_or(1).max(1);
     let offset = (page - 1) * limit;
 
     let mut qb = sqlx::QueryBuilder::new(
@@ -317,40 +243,46 @@ async fn search_recipes(
     if has_access || has_shares {
         qb.push(" AND (1=0");
 
-        if let Some(accs) = query.filters.as_ref().unwrap().access_rights.as_ref() {
-            for a in accs {
-                match a {
-                    RecipeAccessRights::Owner => {
-                        qb.push(" OR r.owner_id = ");
-                        qb.push_bind(u_id);
-                    }
-                    RecipeAccessRights::Editor => {
-                        qb.push(" OR EXISTS (SELECT 1 FROM recipe_editors e WHERE e.recipe_id = r.id AND e.user_id = ");
-                        qb.push_bind(u_id);
-                        qb.push(")");
-                    }
-                    RecipeAccessRights::Viewer => {
-                        qb.push(" OR EXISTS (SELECT 1 FROM recipe_viewers v WHERE v.recipe_id = r.id AND v.user_id = ");
-                        qb.push_bind(u_id);
-                        qb.push(")");
+        if let Some(filters) = &query.filters {
+            if let Some(accs) = filters.access_rights.as_ref() {
+                for a in accs {
+                    match a {
+                        RecipeAccessRights::Owner => {
+                            qb.push(" OR r.owner_id = ");
+                            qb.push_bind(u_id);
+                        }
+                        RecipeAccessRights::Editor => {
+                            qb.push(" OR EXISTS (SELECT 1 FROM recipe_editors e WHERE e.recipe_id = r.id AND e.user_id = ");
+                            qb.push_bind(u_id);
+                            qb.push(")");
+                        }
+                        RecipeAccessRights::Viewer => {
+                            qb.push(" OR EXISTS (SELECT 1 FROM recipe_viewers v WHERE v.recipe_id = r.id AND v.user_id = ");
+                            qb.push_bind(u_id);
+                            qb.push(")");
+                        }
                     }
                 }
             }
-        }
 
-        if let Some(shs) = query.filters.as_ref().unwrap().share_states.as_ref() {
-            for s in shs {
-                match s {
-                    RecipeShareState::Private => {
-                        qb.push(" OR (r.owner_id = ");
-                        qb.push_bind(u_id);
-                        qb.push(" AND NOT EXISTS (SELECT 1 FROM recipe_editors WHERE recipe_id = r.id) AND NOT EXISTS (SELECT 1 FROM recipe_viewers WHERE recipe_id = r.id))");
-                    }
-                    RecipeShareState::Shared => {
-                        qb.push(" OR EXISTS (SELECT 1 FROM recipe_viewers WHERE recipe_id = r.id)");
-                    }
-                    RecipeShareState::Collaborative => {
-                        qb.push(" OR EXISTS (SELECT 1 FROM recipe_editors WHERE recipe_id = r.id)");
+            if let Some(shs) = filters.share_states.as_ref() {
+                for s in shs {
+                    match s {
+                        RecipeShareState::Private => {
+                            qb.push(" OR (r.owner_id = ");
+                            qb.push_bind(u_id);
+                            qb.push(" AND NOT EXISTS (SELECT 1 FROM recipe_editors WHERE recipe_id = r.id) AND NOT EXISTS (SELECT 1 FROM recipe_viewers WHERE recipe_id = r.id))");
+                        }
+                        RecipeShareState::Shared => {
+                            qb.push(
+                                " OR EXISTS (SELECT 1 FROM recipe_viewers WHERE recipe_id = r.id)",
+                            );
+                        }
+                        RecipeShareState::Collaborative => {
+                            qb.push(
+                                " OR EXISTS (SELECT 1 FROM recipe_editors WHERE recipe_id = r.id)",
+                            );
+                        }
                     }
                 }
             }
@@ -507,5 +439,26 @@ async fn search_recipes(
         None
     };
 
-    Ok(Json(PaginatedResponse { data, cursor }))
+    Ok(PaginatedResponse { data, cursor })
+}
+
+async fn list_recipes(
+    State(state): State<AppState>,
+    Extension(user_id): Extension<i32>,
+    Query(pagination): Query<PaginationQuery>,
+) -> Result<Json<PaginatedResponse<RecipePreview>>, AppError> {
+    let search_query = RecipeSearchQuery::default();
+    let res = fetch_recipes(&state, user_id, pagination, search_query).await?;
+    Ok(Json(res))
+}
+
+async fn search_recipes(
+    State(state): State<AppState>,
+    Extension(user_id): Extension<i32>,
+    Query(pagination): Query<PaginationQuery>,
+    query: Option<Json<RecipeSearchQuery>>,
+) -> Result<Json<PaginatedResponse<RecipePreview>>, AppError> {
+    let query = query.map(|q| q.0).unwrap_or_default();
+    let res = fetch_recipes(&state, user_id, pagination, query).await?;
+    Ok(Json(res))
 }

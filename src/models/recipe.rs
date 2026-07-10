@@ -178,8 +178,6 @@ pub struct CreateRecipe {
 pub struct RecipeSearchQuery {
     pub filters: Option<RecipeFilters>,
     pub sort: Option<RecipeSort>,
-    pub page: Option<i64>,
-    pub limit: Option<i64>,
 }
 
 #[derive(Debug, Deserialize)]
