@@ -189,13 +189,35 @@ pub struct RecipeFilters {
     pub tags: Option<Vec<String>>,
     pub ingredients: Option<Vec<i64>>,
     pub max_work_time: Option<i32>,
-    pub access_rights: Option<Vec<String>>,
-    pub share_states: Option<Vec<String>>,
+    pub access_rights: Option<Vec<RecipeAccessRights>>,
+    pub share_states: Option<Vec<RecipeShareState>>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RecipeSort {
     pub field: String,
-    pub order: String,
+    pub order: Order,
+}
+
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum RecipeAccessRights {
+    Owner,
+    Editor,
+    Viewer,
+}
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum RecipeShareState {
+    Private,
+    Shared,
+    Collaborative,
+}
+
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Order {
+    Asc,
+    Desc,
 }

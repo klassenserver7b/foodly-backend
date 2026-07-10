@@ -4,7 +4,10 @@
 //! and copying recipes using PostgreSQL via `sqlx`.
 mod helpers;
 
-use crate::models::recipe::{CreateRecipe, Recipe, RecipePreview, RecipeSearchQuery};
+use crate::models::recipe::{
+    CreateRecipe, Order, Recipe, RecipeAccessRights, RecipePreview, RecipeSearchQuery,
+    RecipeShareState,
+};
 use crate::{AppState, error::AppError};
 use axum::{
     Extension, Json, Router,
@@ -164,7 +167,6 @@ async fn get_recipe(
         created_at: Some(rec.created_at.to_rfc3339()),
         updated_at: Some(rec.updated_at.to_rfc3339()),
     };
-
     Ok(Json(recipe))
 }
 
@@ -317,41 +319,39 @@ async fn search_recipes(
 
         if let Some(accs) = query.filters.as_ref().unwrap().access_rights.as_ref() {
             for a in accs {
-                match a.as_str() {
-                    "owner" => {
+                match a {
+                    RecipeAccessRights::Owner => {
                         qb.push(" OR r.owner_id = ");
                         qb.push_bind(u_id);
                     }
-                    "editor" => {
+                    RecipeAccessRights::Editor => {
                         qb.push(" OR EXISTS (SELECT 1 FROM recipe_editors e WHERE e.recipe_id = r.id AND e.user_id = ");
                         qb.push_bind(u_id);
                         qb.push(")");
                     }
-                    "viewer" => {
+                    RecipeAccessRights::Viewer => {
                         qb.push(" OR EXISTS (SELECT 1 FROM recipe_viewers v WHERE v.recipe_id = r.id AND v.user_id = ");
                         qb.push_bind(u_id);
                         qb.push(")");
                     }
-                    _ => {}
                 }
             }
         }
 
         if let Some(shs) = query.filters.as_ref().unwrap().share_states.as_ref() {
             for s in shs {
-                match s.as_str() {
-                    "private" => {
+                match s {
+                    RecipeShareState::Private => {
                         qb.push(" OR (r.owner_id = ");
                         qb.push_bind(u_id);
                         qb.push(" AND NOT EXISTS (SELECT 1 FROM recipe_editors WHERE recipe_id = r.id) AND NOT EXISTS (SELECT 1 FROM recipe_viewers WHERE recipe_id = r.id))");
                     }
-                    "shared" => {
+                    RecipeShareState::Shared => {
                         qb.push(" OR EXISTS (SELECT 1 FROM recipe_viewers WHERE recipe_id = r.id)");
                     }
-                    "collaborative" => {
+                    RecipeShareState::Collaborative => {
                         qb.push(" OR EXISTS (SELECT 1 FROM recipe_editors WHERE recipe_id = r.id)");
                     }
-                    _ => {}
                 }
             }
         }
@@ -417,7 +417,7 @@ async fn search_recipes(
     }
 
     if let Some(s) = &query.sort {
-        let order = if s.order.to_lowercase() == "desc" {
+        let order = if s.order == Order::Desc {
             "DESC NULLS LAST"
         } else {
             "ASC NULLS LAST"
