@@ -1,0 +1,107 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT\n            c.id, c.user_id, c.name, c.sort_order, c.color, c.color_light, c.color_dark,\n            COALESCE((SELECT array_agg(recipe_id ORDER BY position) FROM user_category_recipes WHERE category_id = c.id), '{}') as \"recipes!\"\n        FROM user_categories c\n        WHERE c.id = $1\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "user_categories",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "user_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "user_categories",
+            "name": "user_id"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "name",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "user_categories",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "sort_order",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "user_categories",
+            "name": "sort_order"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "color",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "user_categories",
+            "name": "color"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "color_light",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "user_categories",
+            "name": "color_light"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "color_dark",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "user_categories",
+            "name": "color_dark"
+          }
+        }
+      },
+      {
+        "ordinal": 7,
+        "name": "recipes!",
+        "type_info": "Int8Array",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true,
+      false,
+      true,
+      true,
+      null
+    ]
+  },
+  "hash": "b785da6f2d7340f30cf6479808f20d43f17d4326d5415f30a000a1c9f9e15e2b"
+}
