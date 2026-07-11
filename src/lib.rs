@@ -12,11 +12,13 @@ pub mod db;
 pub mod error;
 pub mod macros;
 pub mod models;
+pub mod services;
 
 /// The shared application state injected into all Axum handlers.
 #[derive(Clone)]
 pub struct AppState {
     pub pool: sqlx::PgPool,
+    pub image_storage_path: std::path::PathBuf,
 }
 
 pub async fn auth_middleware(mut req: Request, next: Next) -> Result<Response, StatusCode> {

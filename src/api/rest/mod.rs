@@ -2,7 +2,9 @@ use axum::Router;
 
 pub mod catalogs;
 pub mod categories;
+pub mod images;
 pub mod recipes;
+pub mod users;
 
 pub fn router() -> Router<crate::AppState> {
     Router::new()
@@ -10,4 +12,6 @@ pub fn router() -> Router<crate::AppState> {
         .nest("/tags", catalogs::tags_router())
         .nest("/ingredients", catalogs::ingredients_router())
         .nest("/categories", categories::router())
+        .nest("/users", users::router())
+        .nest("/images", images::router())
 }

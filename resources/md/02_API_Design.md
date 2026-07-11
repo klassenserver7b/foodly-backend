@@ -832,6 +832,17 @@ Cache-Control: public, max-age=31536000, immutable
 
 ---
 
+### `DELETE /api/v1/images/:hash`
+
+Delete an image by its content hash from both the database and the server's disk.
+
+**Response `204 No Content`**
+
+**Errors:**
+- `404 Not Found` — no image with this hash.
+
+---
+
 ### `GET /api/v1/tags/:id/icon`
 
 Retrieve a tag's SVG icon by tag ID. Returns the raw SVG. Only available for tags where `svg` is non-null.
@@ -846,6 +857,18 @@ Cache-Control: public, max-age=86400
 
 **Errors:**
 - `404 Not Found` — tag has no icon.
+
+---
+
+### `PUT /api/v1/tags/:id/icon`
+
+Upload a new SVG icon for a tag. The body must be a valid SVG file.
+
+**Response `204 No Content`**
+
+**Errors:**
+- `422 Unprocessable Entity` — empty body or invalid SVG format.
+- `404 Not Found` — tag does not exist.
 
 ---
 

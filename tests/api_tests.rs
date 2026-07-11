@@ -10,7 +10,10 @@ use tower::ServiceExt; // for `oneshot`
 
 #[sqlx::test(migrations = "src/db/migrations")]
 async fn test_unauthorized_access(pool: PgPool) {
-    let state = AppState { pool: pool.clone() };
+    let state = AppState {
+        pool: pool.clone(),
+        image_storage_path: std::path::PathBuf::from("/tmp"),
+    };
     let app = app(state);
 
     let response = app
@@ -28,7 +31,10 @@ async fn test_unauthorized_access(pool: PgPool) {
 
 #[sqlx::test(migrations = "src/db/migrations")]
 async fn test_authorized_get_tags(pool: PgPool) {
-    let state = AppState { pool: pool.clone() };
+    let state = AppState {
+        pool: pool.clone(),
+        image_storage_path: std::path::PathBuf::from("/tmp"),
+    };
     let app = app(state);
 
     let response = app
@@ -53,7 +59,10 @@ async fn test_authorized_get_tags(pool: PgPool) {
 
 #[sqlx::test(migrations = "src/db/migrations")]
 async fn test_create_recipe_http(pool: PgPool) {
-    let state = AppState { pool: pool.clone() };
+    let state = AppState {
+        pool: pool.clone(),
+        image_storage_path: std::path::PathBuf::from("/tmp"),
+    };
     let app = app(state);
 
     // Insert mock user directly into DB as the auth mock requires ID=1 by default

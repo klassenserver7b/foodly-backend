@@ -13,7 +13,14 @@ async fn main() -> anyhow::Result<()> {
     let pool = db::init_pool().await?;
     println!("Database connection pool created.");
 
-    let state = AppState { pool };
+    let storage_path_str =
+        std::env::var("IMAGE_STORAGE_PATH").unwrap_or_else(|_| "./storage/images".to_string());
+    let image_storage_path = std::path::PathBuf::from(storage_path_str);
+
+    let state = AppState {
+        pool,
+        image_storage_path,
+    };
     let router = app(state);
 
     let server_address =

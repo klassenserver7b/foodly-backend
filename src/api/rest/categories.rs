@@ -360,7 +360,10 @@ mod tests {
 
     #[sqlx::test(migrations = "src/db/migrations")]
     async fn test_category_lifecycle(pool: PgPool) {
-        let state = State(AppState { pool: pool.clone() });
+        let state = State(AppState {
+            pool: pool.clone(),
+            image_storage_path: std::path::PathBuf::from("/tmp"),
+        });
 
         let user_id_i64 = sqlx::query!("INSERT INTO users (name, email, password_hash) VALUES ('cat_user', 'cat@example.com', 'hash') RETURNING id")
             .fetch_one(&pool)
@@ -468,7 +471,10 @@ mod tests {
 
     #[sqlx::test(migrations = "src/db/migrations")]
     async fn test_category_recipes(pool: PgPool) {
-        let state = State(AppState { pool: pool.clone() });
+        let state = State(AppState {
+            pool: pool.clone(),
+            image_storage_path: std::path::PathBuf::from("/tmp"),
+        });
 
         let user_id_i64 = sqlx::query!("INSERT INTO users (name, email, password_hash) VALUES ('catr_user', 'catr@example.com', 'hash') RETURNING id")
             .fetch_one(&pool)

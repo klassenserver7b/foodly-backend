@@ -473,7 +473,10 @@ mod tests {
 
     #[sqlx::test(migrations = "src/db/migrations")]
     async fn test_recipe_lifecycle(pool: PgPool) {
-        let state = State(AppState { pool: pool.clone() });
+        let state = State(AppState {
+            pool: pool.clone(),
+            image_storage_path: std::path::PathBuf::from("/tmp"),
+        });
 
         let user_id_i64 = sqlx::query!("INSERT INTO users (name, email, password_hash) VALUES ('test', 'test@example.com', 'hash') RETURNING id")
             .fetch_one(&pool)
@@ -563,7 +566,10 @@ mod tests {
 
     #[sqlx::test(migrations = "src/db/migrations")]
     async fn test_recipe_pagination(pool: PgPool) {
-        let state = State(AppState { pool: pool.clone() });
+        let state = State(AppState {
+            pool: pool.clone(),
+            image_storage_path: std::path::PathBuf::from("/tmp"),
+        });
 
         let user_id_i64 = sqlx::query!("INSERT INTO users (name, email, password_hash) VALUES ('test_pag', 'pag@example.com', 'hash') RETURNING id")
             .fetch_one(&pool)
@@ -641,7 +647,10 @@ mod tests {
 
     #[sqlx::test(migrations = "src/db/migrations")]
     async fn test_recipe_permissions(pool: PgPool) {
-        let state = State(AppState { pool: pool.clone() });
+        let state = State(AppState {
+            pool: pool.clone(),
+            image_storage_path: std::path::PathBuf::from("/tmp"),
+        });
 
         let u1_id = sqlx::query!("INSERT INTO users (name, email, password_hash) VALUES ('user1', 'u1@example.com', 'hash') RETURNING id")
             .fetch_one(&pool).await.unwrap().id;
@@ -696,7 +705,10 @@ mod tests {
 
     #[sqlx::test(migrations = "src/db/migrations")]
     async fn test_recipe_copy(pool: PgPool) {
-        let state = State(AppState { pool: pool.clone() });
+        let state = State(AppState {
+            pool: pool.clone(),
+            image_storage_path: std::path::PathBuf::from("/tmp"),
+        });
         let user_id_i64 = sqlx::query!("INSERT INTO users (name, email, password_hash) VALUES ('copy_u', 'copy@example.com', 'hash') RETURNING id")
             .fetch_one(&pool).await.unwrap().id;
         let user_id = Extension(user_id_i64 as i32);
@@ -735,7 +747,10 @@ mod tests {
 
     #[sqlx::test(migrations = "src/db/migrations")]
     async fn test_search_recipes(pool: PgPool) {
-        let state = State(AppState { pool: pool.clone() });
+        let state = State(AppState {
+            pool: pool.clone(),
+            image_storage_path: std::path::PathBuf::from("/tmp"),
+        });
         let user_id_i64 = sqlx::query!("INSERT INTO users (name, email, password_hash) VALUES ('search_u', 'search@example.com', 'hash') RETURNING id")
             .fetch_one(&pool).await.unwrap().id;
         let user_id = Extension(user_id_i64 as i32);
