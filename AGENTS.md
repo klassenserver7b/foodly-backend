@@ -18,6 +18,8 @@ commits in this repo.
 Always use `cargo check` to validate your changes when you think they should compile.
 Use `cargo clippy` sometimes to stay close to rust guidelines.
 If you ask the user to commit check `prek` first to comply with pre commit guidelines
+
+**[IMPORTANT]**
 If you changed API endpoints and their logic **start the server** and use test queries to check if they are working correctly.
 If unsure present the query to the user, let him run it and evaluate the results together.
 

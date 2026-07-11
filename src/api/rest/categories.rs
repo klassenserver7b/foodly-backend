@@ -1,11 +1,12 @@
+use crate::api::rest::recipes::{PaginatedResponse, PaginationQuery};
 use crate::models::category::{
-    Category, CategoryListResponse, CategoryOrderPair, CategoryOrderResponse, CreateCategory,
-    ReorderCategories, UpdateCategoryRecipes,
+    Category, CategoryOrderPair, CategoryOrderResponse, CreateCategory, ReorderCategories,
+    UpdateCategoryRecipes,
 };
 use crate::{AppState, error::AppError};
 use axum::{
     Extension, Json, Router,
-    extract::{Path, State},
+    extract::{Path, Query, State},
     routing::{get, put},
 };
 
@@ -20,10 +21,14 @@ pub fn router() -> Router<AppState> {
 async fn list_categories(
     State(state): State<AppState>,
     Extension(user_id): Extension<i32>,
-) -> Result<Json<CategoryListResponse>, AppError> {
+    Query(pagination): Query<PaginationQuery>,
+) -> Result<Json<PaginatedResponse<Category>>, AppError> {
     let u_id = user_id as i64;
+    let limit = pagination.limit.unwrap_or(20).min(100);
+    let page = pagination.page.unwrap_or(1).max(1);
+    let offset = (page - 1) * limit;
 
-    let records = sqlx::query!(
+    let mut records = sqlx::query!(
         r#"
         SELECT
             c.id, c.user_id, c.name, c.sort_order, c.color, c.color_light, c.color_dark,
@@ -31,11 +36,19 @@ async fn list_categories(
         FROM user_categories c
         WHERE c.user_id = $1
         ORDER BY c.sort_order ASC NULLS LAST, c.id ASC
+        LIMIT $2 OFFSET $3
         "#,
-        u_id
+        u_id,
+        limit + 1,
+        offset
     )
     .fetch_all(&state.pool)
     .await?;
+
+    let has_more = records.len() > limit as usize;
+    if has_more {
+        records.pop();
+    }
 
     let mut data = Vec::with_capacity(records.len());
     for rec in records {
@@ -51,7 +64,13 @@ async fn list_categories(
         });
     }
 
-    Ok(Json(CategoryListResponse { data }))
+    let cursor = if has_more {
+        Some((page + 1).to_string())
+    } else {
+        None
+    };
+
+    Ok(Json(PaginatedResponse { data, cursor }))
 }
 
 async fn create_category(
@@ -382,10 +401,17 @@ mod tests {
         let c2_id = cat2.id;
 
         // 2. List categories
-        let list = list_categories(state.clone(), user_id.clone())
-            .await
-            .unwrap()
-            .0;
+        let list = list_categories(
+            state.clone(),
+            user_id.clone(),
+            Query(PaginationQuery {
+                page: None,
+                limit: None,
+            }),
+        )
+        .await
+        .unwrap()
+        .0;
         assert_eq!(list.data.len(), 2);
         assert_eq!(list.data[0].id, c1_id);
         assert_eq!(list.data[1].id, c2_id);
@@ -426,10 +452,17 @@ mod tests {
         let _ = delete_category(state.clone(), user_id.clone(), Path(c1_id))
             .await
             .unwrap();
-        let list2 = list_categories(state.clone(), user_id.clone())
-            .await
-            .unwrap()
-            .0;
+        let list2 = list_categories(
+            state.clone(),
+            user_id.clone(),
+            Query(PaginationQuery {
+                page: None,
+                limit: None,
+            }),
+        )
+        .await
+        .unwrap()
+        .0;
         assert_eq!(list2.data.len(), 1);
     }
 

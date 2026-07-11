@@ -46,8 +46,3 @@ pub struct CategoryOrderPair {
 pub struct CategoryOrderResponse {
     pub data: Vec<CategoryOrderPair>,
 }
-
-#[derive(Debug, Serialize)]
-pub struct CategoryListResponse {
-    pub data: Vec<Category>,
-}

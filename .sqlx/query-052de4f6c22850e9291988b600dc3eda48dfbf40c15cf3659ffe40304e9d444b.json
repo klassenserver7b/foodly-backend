@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n        SELECT\n            c.id, c.user_id, c.name, c.sort_order, c.color, c.color_light, c.color_dark,\n            COALESCE((SELECT array_agg(recipe_id ORDER BY position) FROM user_category_recipes WHERE category_id = c.id), '{}') as \"recipes!\"\n        FROM user_categories c\n        WHERE c.user_id = $1\n        ORDER BY c.sort_order ASC NULLS LAST, c.id ASC\n        ",
+  "query": "\n        SELECT\n            c.id, c.user_id, c.name, c.sort_order, c.color, c.color_light, c.color_dark,\n            COALESCE((SELECT array_agg(recipe_id ORDER BY position) FROM user_category_recipes WHERE category_id = c.id), '{}') as \"recipes!\"\n        FROM user_categories c\n        WHERE c.user_id = $1\n        ORDER BY c.sort_order ASC NULLS LAST, c.id ASC\n        LIMIT $2 OFFSET $3\n        ",
   "describe": {
     "columns": [
       {
@@ -89,6 +89,8 @@
     ],
     "parameters": {
       "Left": [
+        "Int8",
+        "Int8",
         "Int8"
       ]
     },
@@ -103,5 +105,5 @@
       null
     ]
   },
-  "hash": "818b62352f5e52da0dca5cefc63ed5ff3ea28595ab38c6f1a250e71792f00924"
+  "hash": "052de4f6c22850e9291988b600dc3eda48dfbf40c15cf3659ffe40304e9d444b"
 }
