@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE user_categories SET sort_order = $1 WHERE id = $2 AND user_id = $3",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int4",
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "2cd7c1aec60c2d2c3429e68d25d47eeff2d290b638932d35a46fdaf52cad9841"
+}
