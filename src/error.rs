@@ -64,25 +64,55 @@ impl From<anyhow::Error> for AppError {
     }
 }
 
-impl From<sqlx::Error> for AppError {
-    fn from(err: sqlx::Error) -> Self {
-        if matches!(err, sqlx::Error::RowNotFound) {
-            return Self::NotFound("Resource not found".into());
-        }
+impl From<diesel::result::Error> for AppError {
+    fn from(err: diesel::result::Error) -> Self {
+        use diesel::result::{DatabaseErrorKind, Error as DieselError};
 
-        if let sqlx::Error::Database(db_err) = &err
-            && let Some(code) = db_err.code()
-        {
-            // Postgres error codes: https://www.postgresql.org/docs/current/errcodes-appendix.html
-            match code.as_ref() {
-                "22001" => return Self::Unprocessable("Value too long for column".into()),
-                "23502" => return Self::Unprocessable("Missing required field".into()),
-                "23503" => return Self::Unprocessable("Invalid reference".into()),
-                "23505" => return Self::Conflict("Duplicate value".into()),
-                "23514" => return Self::Unprocessable("Check constraint violation".into()),
-                _ => {}
+        match err {
+            DieselError::NotFound => Self::NotFound("Resource not found".into()),
+            DieselError::DatabaseError(kind, ref info) => {
+                let message = info.message().to_string();
+                match kind {
+                    DatabaseErrorKind::UniqueViolation => Self::Conflict("Duplicate value".into()),
+                    DatabaseErrorKind::NotNullViolation => {
+                        Self::Unprocessable("Missing required field".into())
+                    }
+                    DatabaseErrorKind::ForeignKeyViolation => {
+                        Self::Unprocessable("Invalid reference".into())
+                    }
+                    DatabaseErrorKind::CheckViolation => {
+                        Self::Unprocessable("Check constraint violation".into())
+                    }
+                    _ => Self::Internal(anyhow::anyhow!("Database error: {}", message)),
+                }
             }
+            _ => Self::Internal(anyhow::anyhow!("Query error: {}", err)),
         }
-        Self::Internal(err.into())
+    }
+}
+
+impl From<diesel_async::pooled_connection::deadpool::PoolError> for AppError {
+    fn from(err: diesel_async::pooled_connection::deadpool::PoolError) -> Self {
+        use diesel_async::pooled_connection::PoolError as DieselPoolError;
+        use diesel_async::pooled_connection::deadpool::PoolError as DeadpoolError;
+
+        match err {
+            DeadpoolError::Backend(DieselPoolError::ConnectionError(e)) => {
+                Self::Internal(anyhow::anyhow!("DB connection error: {}", e))
+            }
+            DeadpoolError::Backend(DieselPoolError::QueryError(e)) => {
+                Self::Internal(anyhow::anyhow!("DB pool query error: {}", e))
+            }
+            DeadpoolError::Timeout(_) => {
+                Self::Internal(anyhow::anyhow!("Timed out waiting for a DB connection"))
+            }
+            DeadpoolError::Closed => {
+                Self::Internal(anyhow::anyhow!("DB connection pool is closed"))
+            }
+            DeadpoolError::NoRuntimeSpecified => {
+                Self::Internal(anyhow::anyhow!("DB pool: no async runtime specified"))
+            }
+            e => Self::Internal(anyhow::anyhow!("DB pool error: {}", e)),
+        }
     }
 }

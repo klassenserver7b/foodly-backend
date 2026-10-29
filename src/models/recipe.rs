@@ -122,7 +122,7 @@ impl From<Recipe> for RecipePreview {
 }
 
 // Input Models
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CreateRecipeIngredient {
     pub ingredient: Option<i32>,
@@ -144,7 +144,7 @@ impl CreateRecipeIngredient {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CreateSection {
     pub name: Option<String>,

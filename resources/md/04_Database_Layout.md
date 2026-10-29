@@ -512,7 +512,7 @@ SELECT g.* FROM groups g JOIN group_members gm ON g.id = gm.group_id WHERE gm.us
 
 ## Migration Strategy
 
-Migrations are managed via **SQLx's migration system** (`sqlx migrate`), stored in `src/db/migrations/` as sequentially numbered `.sql` files:
+Migrations are stored in `src/db/migrations/` as sequentially numbered `.sql` files and are applied **at startup** by the backend: `db::init_pool()` connects, then executes every file in order via `AsyncConnection::batch_execute`. Each migration is fully guarded with `IF NOT EXISTS`, so re-running on an already-migrated database is a no-op:
 
 ```
 src/db/migrations/

@@ -9,7 +9,9 @@ axum = { version = "0.8.9" }
 dotenvy = { version = "0.15.7" }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = { version = "1.0.150" }
-sqlx = { version = "0.9.0", features = ["postgres", "runtime-tokio", "uuid", "chrono", "macros"] }
+diesel = { version = "2.3.0", default-features = false, features = ["postgres_backend", "32-column-tables", "chrono", "uuid"] }
+diesel-async = { version = "0.9.2", default-features = false, features = ["postgres", "deadpool"] }
+chrono = { version = "0.4", features = ["serde"] }
 tokio = { version = "1.52.3", features = ["full"] }
 tower-http = { version = "0.7.0", features = ["cors", "trace"] }
 sha2 = { version = "0.11.0" }

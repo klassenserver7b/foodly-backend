@@ -10,7 +10,7 @@ All technical decisions have been locked in:
 2. **Web Framework**: **Axum** 
 3. **Sync Strategy**: **Custom Backlog processing**. The client provides an offline change backlog. The server processes it sequentially and drops any incoming conflicting changes.
 4. **Authentication**: **JWT + REST Login Route**. An initial REST endpoint (`/login`) handles authentication and issues a JWT.
-5. **Database Library**: **SQLx** (async, compile-time checked raw SQL)
+5. **Database Library**: **diesel + diesel-async** (type-safe query builder, async on tokio)
 
 ## Proposed Core Libraries
 
@@ -18,7 +18,7 @@ Based on the requirements (Rust, WebSocket, DB, async), the following tech stack
 
 - **Web Framework**: `axum` (with `axum-ws` for WebSockets in the future)
 - **Async Runtime**: `tokio`
-- **Database Driver**: `sqlx` (allows us to use raw SQL with compile-time checks, supports Postgres)
+- **Database Driver**: `diesel` + `diesel-async` (type-safe query builder DSL over an async tokio-postgres connection, deadpool pooling, Postgres)
 - **Serialization**: `serde` and `serde_json` (crucial for TypeScript `<->` Rust type parity)
 - **Error Handling**: `thiserror` (for library/internal errors) and `anyhow` (for application-level errors)
 - **Logging & Telemetry**: `tracing` and `tracing-subscriber`

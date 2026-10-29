@@ -2,33 +2,50 @@ use crate::error::AppError;
 use crate::models::recipe::{
     CreateRecipe, CreateSection, IngredientRef, Recipe, RecipeIngredient, Section,
 };
+use diesel::prelude::*;
+use diesel::result::OptionalExtension;
+use diesel_async::{AsyncPgConnection, RunQueryDsl};
+
+use crate::schema::{
+    ingredients, recipe_editors, recipe_images, recipe_ingredients, recipe_tags, recipes, sections,
+    steps,
+};
 
 pub(super) async fn insert_section(
     sec: CreateSection,
     r_id: i64,
     s_pos: usize,
-    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    conn: &mut AsyncPgConnection,
 ) -> Result<(), AppError> {
-    let sec_id = sqlx::query!(
-        "INSERT INTO sections (recipe_id, name, position) VALUES ($1, $2, $3) RETURNING id",
-        r_id,
-        sec.name,
-        s_pos as i32
-    )
-    .fetch_one(&mut **tx)
-    .await?
-    .id;
-
-    for (st_pos, step) in sec.steps.into_iter().enumerate() {
-        sqlx::query!(
-            "INSERT INTO steps (section_id, text, position) VALUES ($1, $2, $3)",
-            sec_id,
-            step,
-            st_pos as i32
-        )
-        .execute(&mut **tx)
+    let sec_id = diesel::insert_into(sections::table)
+        .values((
+            sections::recipe_id.eq(r_id),
+            sections::name.eq(sec.name),
+            sections::position.eq(s_pos as i32),
+        ))
+        .returning(sections::id)
+        .get_result::<i64>(conn)
         .await?;
+
+    if !sec.steps.is_empty() {
+        let values: Vec<_> = sec
+            .steps
+            .into_iter()
+            .enumerate()
+            .map(|(pos, text)| {
+                (
+                    steps::section_id.eq(sec_id),
+                    steps::text.eq(text),
+                    steps::position.eq(pos as i32),
+                )
+            })
+            .collect();
+        diesel::insert_into(steps::table)
+            .values(&values)
+            .execute(conn)
+            .await?;
     }
+
     for (i_pos, ing) in sec.ingredients.into_iter().enumerate() {
         if !ing.is_valid() {
             return Err(AppError::Unprocessable(format!(
@@ -37,134 +54,184 @@ pub(super) async fn insert_section(
             )));
         }
 
-        sqlx::query!("INSERT INTO recipe_ingredients (section_id, ingredient_id, text, amount, amount_prefix, unit, position) VALUES ($1, $2, $3, $4, $5, $6, $7)",
-            sec_id, ing.ingredient.map(|i| i as i64), ing.text, ing.amount, ing.amount_prefix, ing.unit, i_pos as i32).execute(&mut **tx).await?;
+        diesel::insert_into(recipe_ingredients::table)
+            .values((
+                recipe_ingredients::section_id.eq(sec_id),
+                recipe_ingredients::ingredient_id.eq(ing.ingredient.map(|i| i as i64)),
+                recipe_ingredients::text.eq(ing.text),
+                recipe_ingredients::amount.eq(ing.amount),
+                recipe_ingredients::amount_prefix.eq(ing.amount_prefix),
+                recipe_ingredients::unit.eq(ing.unit),
+                recipe_ingredients::position.eq(i_pos as i32),
+            ))
+            .execute(conn)
+            .await?;
     }
     Ok(())
 }
 
 pub(super) async fn fetch_sections(
     r_id: i64,
-    pool: &sqlx::PgPool,
+    conn: &mut AsyncPgConnection,
 ) -> Result<Vec<Section>, AppError> {
-    let sec_rows = sqlx::query!(
-        "SELECT id, name FROM sections WHERE recipe_id = $1 ORDER BY position ASC",
-        r_id
-    )
-    .fetch_all(pool)
-    .await?;
-
-    let mut sections = Vec::with_capacity(sec_rows.len());
-    for sec in sec_rows {
-        let step_rows = sqlx::query!(
-            "SELECT text FROM steps WHERE section_id = $1 ORDER BY position ASC",
-            sec.id
-        )
-        .fetch_all(pool)
+    let sec_rows = sections::table
+        .filter(sections::recipe_id.eq(r_id))
+        .order(sections::position.asc())
+        .select((sections::id, sections::name))
+        .load::<(i64, Option<String>)>(conn)
         .await?;
 
-        let ing_rows = sqlx::query!(
-            r#"
-            SELECT ri.id, ri.ingredient_id, i.name as "ingredient_name?", ri.text, ri.amount, ri.amount_prefix, ri.unit
-            FROM recipe_ingredients ri
-            LEFT JOIN ingredients i ON ri.ingredient_id = i.id
-            WHERE ri.section_id = $1
-            ORDER BY ri.position ASC
-            "#,
-            sec.id
-        ).fetch_all(pool).await?;
+    let mut result = Vec::with_capacity(sec_rows.len());
+    for (sec_id, sec_name) in sec_rows {
+        let step_rows: Vec<String> = steps::table
+            .filter(steps::section_id.eq(sec_id))
+            .order(steps::position.asc())
+            .select(steps::text)
+            .load(conn)
+            .await?;
 
-        sections.push(Section {
-            id: sec.id as i32,
-            name: sec.name,
-            steps: step_rows.into_iter().map(|s| s.text).collect(),
-            ingredients: ing_rows
-                .into_iter()
-                .map(|i| RecipeIngredient {
-                    id: i.id as i32,
-                    ingredient: i.ingredient_id.map(|id| IngredientRef {
+        let ing_rows = recipe_ingredients::table
+            .left_join(ingredients::table)
+            .filter(recipe_ingredients::section_id.eq(sec_id))
+            .order(recipe_ingredients::position.asc())
+            .select((
+                recipe_ingredients::id,
+                recipe_ingredients::ingredient_id,
+                ingredients::name.nullable(),
+                recipe_ingredients::text,
+                recipe_ingredients::amount,
+                recipe_ingredients::amount_prefix,
+                recipe_ingredients::unit,
+            ))
+            .load::<(
+                i64,
+                Option<i64>,
+                Option<String>,
+                Option<String>,
+                Option<String>,
+                Option<String>,
+                Option<String>,
+            )>(conn)
+            .await?;
+
+        let ings: Vec<RecipeIngredient> = ing_rows
+            .into_iter()
+            .map(
+                |(id, ingredient_id, ingredient_name, text, amount, amount_prefix, unit)| {
+                    RecipeIngredient {
                         id: id as i32,
-                        name: i.ingredient_name.unwrap_or_default(),
-                    }),
-                    text: i.text,
-                    amount: i.amount,
-                    amount_prefix: i.amount_prefix,
-                    unit: i.unit,
-                })
-                .collect(),
+                        ingredient: ingredient_id.map(|iid| IngredientRef {
+                            id: iid as i32,
+                            name: ingredient_name.unwrap_or_default(),
+                        }),
+                        text,
+                        amount,
+                        amount_prefix,
+                        unit,
+                    }
+                },
+            )
+            .collect();
+
+        result.push(Section {
+            id: sec_id as i32,
+            name: sec_name,
+            steps: step_rows,
+            ingredients: ings,
         });
     }
-    Ok(sections)
+    Ok(result)
 }
 
 pub(super) async fn insert_recipe_tags(
     r_id: i64,
     tags: Vec<String>,
-    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    conn: &mut AsyncPgConnection,
 ) -> Result<(), AppError> {
-    for (pos, tag) in tags.into_iter().enumerate() {
-        sqlx::query!(
-            "INSERT INTO recipe_tags (recipe_id, tag_id, position) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING",
-            r_id,
-            tag,
-            pos as i32
-        )
-        .execute(&mut **tx)
-        .await?;
+    if tags.is_empty() {
+        return Ok(());
     }
+    let values: Vec<_> = tags
+        .into_iter()
+        .enumerate()
+        .map(|(pos, tag)| {
+            (
+                recipe_tags::recipe_id.eq(r_id),
+                recipe_tags::tag_id.eq(tag),
+                recipe_tags::position.eq(pos as i32),
+            )
+        })
+        .collect();
+    diesel::insert_into(recipe_tags::table)
+        .values(&values)
+        .on_conflict_do_nothing()
+        .execute(conn)
+        .await?;
     Ok(())
 }
 
 pub(super) async fn insert_recipe_images(
     r_id: i64,
     images: Vec<i32>,
-    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    conn: &mut AsyncPgConnection,
 ) -> Result<(), AppError> {
-    for (pos, img) in images.into_iter().enumerate() {
-        sqlx::query!(
-            "INSERT INTO recipe_images (recipe_id, image_id, position) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING",
-            r_id,
-            img as i64,
-            pos as i32
-        )
-        .execute(&mut **tx)
-        .await?;
+    if images.is_empty() {
+        return Ok(());
     }
+    let values: Vec<_> = images
+        .into_iter()
+        .enumerate()
+        .map(|(pos, img)| {
+            (
+                recipe_images::recipe_id.eq(r_id),
+                recipe_images::image_id.eq(img as i64),
+                recipe_images::position.eq(pos as i32),
+            )
+        })
+        .collect();
+    diesel::insert_into(recipe_images::table)
+        .values(&values)
+        .on_conflict_do_nothing()
+        .execute(conn)
+        .await?;
     Ok(())
 }
 
 pub(super) async fn replace_recipe_tags(
     r_id: i64,
     tags: Vec<String>,
-    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    conn: &mut AsyncPgConnection,
 ) -> Result<(), AppError> {
-    sqlx::query!("DELETE FROM recipe_tags WHERE recipe_id = $1", r_id)
-        .execute(&mut **tx)
+    diesel::delete(recipe_tags::table)
+        .filter(recipe_tags::recipe_id.eq(r_id))
+        .execute(conn)
         .await?;
-    insert_recipe_tags(r_id, tags, tx).await
+    insert_recipe_tags(r_id, tags, conn).await
 }
 
 pub(super) async fn replace_recipe_images(
     r_id: i64,
     images: Vec<i32>,
-    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    conn: &mut AsyncPgConnection,
 ) -> Result<(), AppError> {
-    sqlx::query!("DELETE FROM recipe_images WHERE recipe_id = $1", r_id)
-        .execute(&mut **tx)
+    diesel::delete(recipe_images::table)
+        .filter(recipe_images::recipe_id.eq(r_id))
+        .execute(conn)
         .await?;
-    insert_recipe_images(r_id, images, tx).await
+    insert_recipe_images(r_id, images, conn).await
 }
 
 pub(super) async fn replace_recipe_sections(
     r_id: i64,
-    sections: Vec<CreateSection>,
-    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    secs: Vec<CreateSection>,
+    conn: &mut AsyncPgConnection,
 ) -> Result<(), AppError> {
-    sqlx::query!("DELETE FROM sections WHERE recipe_id = $1", r_id)
-        .execute(&mut **tx)
+    diesel::delete(sections::table)
+        .filter(sections::recipe_id.eq(r_id))
+        .execute(conn)
         .await?;
-    for (s_pos, sec) in sections.into_iter().enumerate() {
-        insert_section(sec, r_id, s_pos, tx).await?;
+    for (s_pos, sec) in secs.into_iter().enumerate() {
+        insert_section(sec, r_id, s_pos, conn).await?;
     }
     Ok(())
 }
@@ -172,15 +239,25 @@ pub(super) async fn replace_recipe_sections(
 pub(super) async fn check_can_edit(
     r_id: i64,
     u_id: i64,
-    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    conn: &mut AsyncPgConnection,
 ) -> Result<(), AppError> {
-    let owner_check = sqlx::query!(
-        "SELECT owner_id, EXISTS(SELECT 1 FROM recipe_editors WHERE recipe_id = $1 AND user_id = $2) as is_editor FROM recipes WHERE id = $1",
-        r_id, u_id
-    ).fetch_optional(&mut **tx).await?
+    let owner_id: i64 = recipes::table
+        .filter(recipes::id.eq(r_id))
+        .select(recipes::owner_id)
+        .first(conn)
+        .await
+        .optional()?
         .ok_or_else(|| AppError::NotFound("Recipe not found".into()))?;
 
-    if owner_check.owner_id != u_id && !owner_check.is_editor.unwrap_or(false) {
+    let is_editor: bool = diesel::select(diesel::dsl::exists(
+        recipe_editors::table
+            .filter(recipe_editors::recipe_id.eq(r_id))
+            .filter(recipe_editors::user_id.eq(u_id)),
+    ))
+    .first(conn)
+    .await?;
+
+    if owner_id != u_id && !is_editor {
         return Err(AppError::Forbidden);
     }
     Ok(())
@@ -189,28 +266,23 @@ pub(super) async fn check_can_edit(
 pub(super) async fn update_recipe_metadata(
     r_id: i64,
     payload: &CreateRecipe,
-    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    conn: &mut AsyncPgConnection,
 ) -> Result<(), AppError> {
-    sqlx::query!(
-        r#"
-        UPDATE recipes SET
-            name = $2, source = $3, time_display = $4, work_minutes = $5, overall_minutes = $6,
-            size_number = $7, size_text = $8, notes = $9, main_image_id = $10, updated_at = now()
-        WHERE id = $1
-        "#,
-        r_id,
-        payload.name,
-        payload.source,
-        payload.time,
-        payload.work_minutes,
-        payload.overall_minutes,
-        payload.size_number,
-        payload.size_text,
-        &payload.notes,
-        payload.main_image.map(|i| i as i64)
-    )
-    .execute(&mut **tx)
-    .await?;
+    diesel::update(recipes::table.find(r_id))
+        .set((
+            recipes::name.eq(payload.name.clone()),
+            recipes::source.eq(payload.source.clone()),
+            recipes::time_display.eq(payload.time.clone()),
+            recipes::work_minutes.eq(payload.work_minutes),
+            recipes::overall_minutes.eq(payload.overall_minutes),
+            recipes::size_number.eq(payload.size_number),
+            recipes::size_text.eq(payload.size_text.clone()),
+            recipes::notes.eq(payload.notes.clone()),
+            recipes::main_image_id.eq(payload.main_image.map(|i| i as i64)),
+            recipes::updated_at.eq(diesel::dsl::now),
+        ))
+        .execute(conn)
+        .await?;
     Ok(())
 }
 
