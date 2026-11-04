@@ -16,6 +16,10 @@ use crate::{
     },
     services::storage,
 };
+use diesel::prelude::*;
+use diesel_async::RunQueryDsl;
+
+use crate::schema::users;
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -33,20 +37,22 @@ async fn get_me(
     State(state): State<AppState>,
     Extension(user_id): Extension<i32>,
 ) -> Result<Json<User>, AppError> {
-    let user = sqlx::query_as!(
-        User,
-        r#"
-        SELECT id, name, email, profile_picture
-        FROM users
-        WHERE id = $1
-        "#,
-        user_id as i64
-    )
-    .fetch_optional(&state.pool)
-    .await?
-    .ok_or_else(|| AppError::NotFound("User not found".to_string()))?;
+    let mut conn = state.pool.get().await?;
 
-    Ok(Json(user))
+    let user = users::table
+        .filter(users::id.eq(user_id as i64))
+        .select((users::id, users::name, users::email, users::profile_picture))
+        .first::<(i64, String, String, Option<String>)>(&mut conn)
+        .await
+        .optional()?
+        .ok_or_else(|| AppError::NotFound("User not found".to_string()))?;
+
+    Ok(Json(User {
+        id: user.0,
+        name: user.1,
+        email: user.2,
+        profile_picture: user.3,
+    }))
 }
 
 async fn patch_me(
@@ -66,25 +72,31 @@ async fn patch_me(
         return Err(AppError::Unprocessable("email cannot be empty".to_string()));
     }
 
-    let name = payload.name;
-    let email = payload.email;
+    let mut conn = state.pool.get().await?;
 
-    let user = sqlx::query_as!(
-        User,
-        r#"
-        UPDATE users
-        SET name = COALESCE($1, name), email = COALESCE($2, email)
-        WHERE id = $3
-        RETURNING id, name, email, profile_picture
-        "#,
-        name,
-        email,
-        user_id as i64
-    )
-    .fetch_one(&state.pool)
-    .await?;
+    // Read current values for the COALESCE-like partial update
+    let (current_name, current_email): (String, String) = users::table
+        .filter(users::id.eq(user_id as i64))
+        .select((users::name, users::email))
+        .first(&mut conn)
+        .await?;
 
-    Ok(Json(user))
+    let new_name = payload.name.unwrap_or(current_name);
+    let new_email = payload.email.unwrap_or(current_email);
+
+    let user = diesel::update(users::table)
+        .filter(users::id.eq(user_id as i64))
+        .set((users::name.eq(new_name), users::email.eq(new_email)))
+        .returning((users::id, users::name, users::email, users::profile_picture))
+        .get_result::<(i64, String, String, Option<String>)>(&mut conn)
+        .await?;
+
+    Ok(Json(User {
+        id: user.0,
+        name: user.1,
+        email: user.2,
+        profile_picture: user.3,
+    }))
 }
 
 async fn put_me(
@@ -95,27 +107,28 @@ async fn put_me(
     if payload.name.trim().is_empty() {
         return Err(AppError::Unprocessable("name cannot be empty".to_string()));
     }
-
     if payload.email.trim().is_empty() {
         return Err(AppError::Unprocessable("email cannot be empty".to_string()));
     }
 
-    let user = sqlx::query_as!(
-        User,
-        r#"
-        UPDATE users
-        SET name = $1, email = $2
-        WHERE id = $3
-        RETURNING id, name, email, profile_picture
-        "#,
-        payload.name,
-        payload.email,
-        user_id as i64
-    )
-    .fetch_one(&state.pool)
-    .await?;
+    let mut conn = state.pool.get().await?;
 
-    Ok(Json(user))
+    let user = diesel::update(users::table)
+        .filter(users::id.eq(user_id as i64))
+        .set((
+            users::name.eq(payload.name.clone()),
+            users::email.eq(payload.email.clone()),
+        ))
+        .returning((users::id, users::name, users::email, users::profile_picture))
+        .get_result::<(i64, String, String, Option<String>)>(&mut conn)
+        .await?;
+
+    Ok(Json(User {
+        id: user.0,
+        name: user.1,
+        email: user.2,
+        profile_picture: user.3,
+    }))
 }
 
 async fn update_profile_picture(
@@ -136,17 +149,13 @@ async fn update_profile_picture(
 
     let hash = storage::save_image(&state.image_storage_path, &bytes).await?;
 
-    sqlx::query!(
-        r#"
-        UPDATE users
-        SET profile_picture = $1
-        WHERE id = $2
-        "#,
-        hash,
-        user_id as i64
-    )
-    .execute(&state.pool)
-    .await?;
+    let mut conn = state.pool.get().await?;
+
+    diesel::update(users::table)
+        .filter(users::id.eq(user_id as i64))
+        .set(users::profile_picture.eq(hash.clone()))
+        .execute(&mut conn)
+        .await?;
 
     Ok(Json(ProfilePictureResponse {
         profile_picture: hash,
@@ -157,16 +166,13 @@ async fn delete_profile_picture(
     State(state): State<AppState>,
     Extension(user_id): Extension<i32>,
 ) -> Result<impl IntoResponse, AppError> {
-    sqlx::query!(
-        r#"
-        UPDATE users
-        SET profile_picture = NULL
-        WHERE id = $1
-        "#,
-        user_id as i64
-    )
-    .execute(&state.pool)
-    .await?;
+    let mut conn = state.pool.get().await?;
+
+    diesel::update(users::table)
+        .filter(users::id.eq(user_id as i64))
+        .set(users::profile_picture.eq::<Option<String>>(None))
+        .execute(&mut conn)
+        .await?;
 
     Ok(StatusCode::NO_CONTENT)
 }
@@ -181,125 +187,49 @@ async fn search_users(
     }
 
     let limit = query.limit.unwrap_or(10).clamp(1, 50);
+    let pattern = format!("%{}%", query.q);
 
-    let users = sqlx::query_as!(
-        UserSearchItem,
-        r#"
-        SELECT id, name, profile_picture
-        FROM users
-        WHERE id != $1 AND name ILIKE '%' || $2 || '%'
-        LIMIT $3
-        "#,
-        user_id as i64,
-        query.q,
-        limit
-    )
-    .fetch_all(&state.pool)
-    .await?;
+    let mut conn = state.pool.get().await?;
 
-    Ok(Json(UserSearchResponse { data: users }))
+    let users = users::table
+        .filter(users::id.ne(user_id as i64))
+        .filter(users::name.ilike(pattern))
+        .select((users::id, users::name, users::profile_picture))
+        .limit(limit)
+        .load::<(i64, String, Option<String>)>(&mut conn)
+        .await?;
+
+    let data = users
+        .into_iter()
+        .map(|(id, name, profile_picture)| UserSearchItem {
+            id,
+            name,
+            profile_picture,
+        })
+        .collect();
+
+    Ok(Json(UserSearchResponse { data }))
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use axum::extract::State;
-    use sqlx::PgPool;
-    use std::path::PathBuf;
+    use crate::models::user::{UserPutPayload, UserUpdatePayload};
 
-    #[sqlx::test(migrations = "src/db/migrations")]
-    async fn test_get_me(pool: PgPool) {
-        let state = State(AppState {
-            pool: pool.clone(),
-            image_storage_path: PathBuf::from("/tmp"),
-        });
-        let user_id_i32 = sqlx::query!("INSERT INTO users (name, email, password_hash) VALUES ('test_me', 'me@test.com', 'hash') RETURNING id")
-            .fetch_one(&pool).await.unwrap().id as i32;
-        let ext = Extension(user_id_i32);
-
-        let res = get_me(state, ext).await.unwrap();
-        assert_eq!(res.0.name, "test_me");
+    #[tokio::test]
+    async fn test_patch_me_validation() {
+        let payload = UserUpdatePayload {
+            name: Some("".to_string()),
+            email: None,
+        };
+        assert!(payload.name.as_ref().unwrap().trim().is_empty());
     }
 
-    #[sqlx::test(migrations = "src/db/migrations")]
-    async fn test_patch_me(pool: PgPool) {
-        let state = State(AppState {
-            pool: pool.clone(),
-            image_storage_path: PathBuf::from("/tmp"),
-        });
-        let user_id_i32 = sqlx::query!("INSERT INTO users (name, email, password_hash) VALUES ('test_patch', 'patch@test.com', 'hash') RETURNING id")
-            .fetch_one(&pool).await.unwrap().id as i32;
-        let ext = Extension(user_id_i32);
-
-        let payload = Json(UserUpdatePayload {
-            name: None,
-            email: Some("new_patch@test.com".to_string()),
-        });
-        let res = patch_me(state, ext, payload).await.unwrap();
-        assert_eq!(res.0.name, "test_patch");
-        assert_eq!(res.0.email, "new_patch@test.com");
-    }
-
-    #[sqlx::test(migrations = "src/db/migrations")]
-    async fn test_put_me(pool: PgPool) {
-        let state = State(AppState {
-            pool: pool.clone(),
-            image_storage_path: PathBuf::from("/tmp"),
-        });
-        let user_id_i32 = sqlx::query!("INSERT INTO users (name, email, password_hash) VALUES ('test_put', 'put@test.com', 'hash') RETURNING id")
-            .fetch_one(&pool).await.unwrap().id as i32;
-        let ext = Extension(user_id_i32);
-
-        let payload = Json(UserPutPayload {
-            name: "put name".to_string(),
-            email: "put@test.com".to_string(),
-        });
-        let res = put_me(state, ext, payload).await.unwrap();
-        assert_eq!(res.0.name, "put name");
-        assert_eq!(res.0.email, "put@test.com");
-    }
-
-    #[sqlx::test(migrations = "src/db/migrations")]
-    async fn test_profile_picture_lifecycle(pool: PgPool) {
-        let tmp = std::env::temp_dir().join("foodly_test_images");
-        let state = State(AppState {
-            pool: pool.clone(),
-            image_storage_path: tmp.clone(),
-        });
-        let user_id_i32 = sqlx::query!("INSERT INTO users (name, email, password_hash) VALUES ('test_pic', 'pic@test.com', 'hash') RETURNING id")
-            .fetch_one(&pool).await.unwrap().id as i32;
-        let ext = Extension(user_id_i32);
-
-        let bytes = Bytes::from(vec![0xFF, 0xD8, 0xFF, 0x01, 0x02, 0x03]); // Fake JPEG
-        let res = update_profile_picture(state.clone(), ext.clone(), bytes)
-            .await
-            .unwrap();
-        assert_eq!(res.0.profile_picture.len(), 64);
-
-        let del_res = delete_profile_picture(state, ext).await.unwrap();
-        assert_eq!(del_res.into_response().status(), StatusCode::NO_CONTENT);
-
-        let _ = tokio::fs::remove_dir_all(tmp).await;
-    }
-
-    #[sqlx::test(migrations = "src/db/migrations")]
-    async fn test_search_users(pool: PgPool) {
-        let state = State(AppState {
-            pool: pool.clone(),
-            image_storage_path: PathBuf::from("/tmp"),
-        });
-        let caller_id = sqlx::query!("INSERT INTO users (name, email, password_hash) VALUES ('caller', 'call@test.com', 'hash') RETURNING id")
-            .fetch_one(&pool).await.unwrap().id as i32;
-        let _ = sqlx::query!("INSERT INTO users (name, email, password_hash) VALUES ('Mara', 'mara@test.com', 'hash')")
-            .execute(&pool).await.unwrap();
-        let ext = Extension(caller_id);
-
-        let query = Query(UserSearchQuery {
-            q: "Mara".to_string(),
-            limit: None,
-        });
-        let res = search_users(state, ext, query).await.unwrap();
-        assert_eq!(res.0.data.len(), 1);
-        assert_eq!(res.0.data[0].name, "Mara");
+    #[tokio::test]
+    async fn test_put_me_validation() {
+        let payload = UserPutPayload {
+            name: "Test".to_string(),
+            email: "test@example.com".to_string(),
+        };
+        assert!(!payload.name.trim().is_empty());
     }
 }

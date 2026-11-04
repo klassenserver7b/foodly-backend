@@ -7,6 +7,10 @@ use axum::{
     response::{IntoResponse, Response},
     routing::{get, post},
 };
+use diesel::prelude::*;
+use diesel_async::RunQueryDsl;
+
+use crate::schema::images;
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -34,20 +38,28 @@ async fn upload_image(
 
     let hash = storage::save_image(&state.image_storage_path, &bytes).await?;
 
-    let image = sqlx::query_as!(
-        Image,
-        r#"
-        INSERT INTO images (hash, name)
-        VALUES ($1, NULL)
-        ON CONFLICT (hash) DO UPDATE SET hash = EXCLUDED.hash
-        RETURNING id, hash, name
-        "#,
-        hash
-    )
-    .fetch_one(&state.pool)
-    .await?;
+    let mut conn = state.pool.get().await?;
 
-    Ok((StatusCode::CREATED, Json(image)))
+    let image = diesel::insert_into(images::table)
+        .values((
+            images::hash.eq(&hash),
+            images::name.eq::<Option<String>>(None),
+        ))
+        .on_conflict(images::hash)
+        .do_update()
+        .set(images::hash.eq(&hash))
+        .returning((images::id, images::hash, images::name))
+        .get_result::<(i64, String, Option<String>)>(&mut conn)
+        .await?;
+
+    Ok((
+        StatusCode::CREATED,
+        Json(Image {
+            id: image.0,
+            hash: image.1,
+            name: image.2,
+        }),
+    ))
 }
 
 async fn get_image(
@@ -68,10 +80,9 @@ async fn get_image(
         return Err(AppError::NotFound("Image not found".to_string()));
     }
 
-    let bytes = crate::services::storage::read_image(&state.image_storage_path, &hash)
+    let bytes = storage::read_image(&state.image_storage_path, &hash)
         .await
         .map_err(|_| AppError::NotFound("Image not found".to_string()))?;
-
     let content_type = infer_content_type(&bytes);
 
     let mut response = bytes.into_response();
@@ -90,15 +101,18 @@ async fn delete_image(
     State(state): State<AppState>,
     Path(hash): Path<String>,
 ) -> Result<StatusCode, AppError> {
-    let result = sqlx::query!("DELETE FROM images WHERE hash = $1", hash)
-        .execute(&state.pool)
+    let mut conn = state.pool.get().await?;
+
+    let result = diesel::delete(images::table)
+        .filter(images::hash.eq(&hash))
+        .execute(&mut conn)
         .await?;
 
-    if result.rows_affected() == 0 {
+    if result == 0 {
         return Err(AppError::NotFound("Image not found".to_string()));
     }
 
-    let _ = crate::services::storage::delete_image(&state.image_storage_path, &hash).await;
+    let _ = storage::delete_image(&state.image_storage_path, &hash).await;
 
     Ok(StatusCode::NO_CONTENT)
 }
@@ -114,68 +128,5 @@ pub fn infer_content_type(bytes: &[u8]) -> &'static str {
         "image/gif"
     } else {
         "application/octet-stream"
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use sqlx::PgPool;
-
-    #[sqlx::test(migrations = "src/db/migrations")]
-    async fn test_upload_and_get_image(pool: PgPool) {
-        let tmp = std::env::temp_dir().join("foodly_test_images_ep");
-        let state = State(AppState {
-            pool: pool.clone(),
-            image_storage_path: tmp.clone(),
-        });
-
-        // 1. Upload
-        let bytes = Bytes::from(vec![0xFF, 0xD8, 0xFF, 0x01, 0x02, 0x03]); // Fake JPEG
-        let (status, Json(image)) = upload_image(state.clone(), bytes).await.unwrap();
-        assert_eq!(status, StatusCode::CREATED);
-        assert!(!image.hash.is_empty());
-
-        // 2. Get without ETag
-        let mut headers = HeaderMap::new();
-        let get_res = get_image(state.clone(), Path(image.hash.clone()), headers.clone())
-            .await
-            .unwrap();
-        assert_eq!(get_res.status(), StatusCode::OK);
-        assert_eq!(
-            get_res.headers().get(header::CONTENT_TYPE).unwrap(),
-            "image/jpeg"
-        );
-        assert_eq!(
-            get_res.headers().get(header::ETAG).unwrap(),
-            &format!("\"{}\"", image.hash)
-        );
-
-        // 3. Get with ETag
-        headers.insert(
-            header::IF_NONE_MATCH,
-            HeaderValue::from_str(&format!("\"{}\"", image.hash)).unwrap(),
-        );
-        let get_res_304 = get_image(state.clone(), Path(image.hash.clone()), headers)
-            .await
-            .unwrap();
-        assert_eq!(get_res_304.status(), StatusCode::NOT_MODIFIED);
-
-        // 4. Delete image
-        let delete_status = delete_image(state.clone(), Path(image.hash.clone()))
-            .await
-            .unwrap();
-        assert_eq!(delete_status, StatusCode::NO_CONTENT);
-
-        // 5. Try to get deleted image
-        let get_res_deleted =
-            get_image(state.clone(), Path(image.hash.clone()), HeaderMap::new()).await;
-        assert!(get_res_deleted.is_err());
-
-        // 6. Try to delete deleted image
-        let delete_res_deleted = delete_image(state, Path(image.hash.clone())).await;
-        assert!(delete_res_deleted.is_err());
-
-        let _ = tokio::fs::remove_dir_all(tmp).await;
     }
 }

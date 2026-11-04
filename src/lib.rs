@@ -7,17 +7,20 @@ use axum::{
 };
 use tower_http::cors::{Any, CorsLayer};
 
+use crate::db::DbPool;
+
 pub mod api;
 pub mod db;
 pub mod error;
 pub mod macros;
 pub mod models;
+pub mod schema;
 pub mod services;
 
 /// The shared application state injected into all Axum handlers.
 #[derive(Clone)]
 pub struct AppState {
-    pub pool: sqlx::PgPool,
+    pub pool: DbPool,
     pub image_storage_path: std::path::PathBuf,
 }
 

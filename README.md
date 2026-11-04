@@ -22,7 +22,7 @@ The backend is built in Rust to ensure high performance, memory safety, and robu
 - **Language**: Rust
 - **Web Framework**: [Axum](https://github.com/tokio-rs/axum) (HTTP & WebSockets)
 - **Database**: PostgreSQL
-- **Database Driver**: [SQLx](https://github.com/launchbadge/sqlx) (Async, compile-time checked SQL)
+- **Database Driver**: [diesel](https://diesel.rs) + [diesel-async](https://github.com/weiznich/diesel_async) (type-safe query builder, async on tokio)
 - **Authentication**: JWT via REST endpoint
 - **Async Runtime**: Tokio
 
@@ -47,8 +47,7 @@ To get a local development environment running with mock data, follow these step
    docker compose up -d
    ```
 2. **Setup Tables:**
-   `cd ./src/db/migrations` an then run the follwing inside this directory (creates the tables) `for file in ./*; do [ -f "$file" ] && docker exec -i foodly_postgres psql -U postgres -d foodly < $file; done`
-   This is usally done by the server directly but due to the structure of sqlx you cant do a `cargo run` because it won't compile without the required tables.
+   Migrations are applied automatically at server startup — each `.sql` file in `src/db/migrations/` is embedded into the binary and executed idempotently on the database. No manual table setup is required.
 
 3. **Seed the database (Optional):**
    If you want to populate the database with mock recipes and users to start testing immediately, you can apply the provided seed script directly into the running Postgres container:

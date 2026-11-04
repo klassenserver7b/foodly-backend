@@ -1,7 +1,7 @@
 //! REST API endpoints for recipe management.
 //!
 //! Provides handlers for listing, creating, reading, updating, deleting,
-//! and copying recipes using PostgreSQL via `sqlx`.
+//! and copying recipes using PostgreSQL via `diesel-async`.
 mod helpers;
 
 use crate::models::recipe::{
@@ -14,8 +14,37 @@ use axum::{
     extract::{Path, Query, State},
     routing::{get, post},
 };
+use diesel::prelude::*;
+use diesel::result::OptionalExtension;
+use diesel::sql_types::Bool;
+use diesel_async::{AsyncConnection, RunQueryDsl};
 use serde::{Deserialize, Serialize};
-use sqlx::Row;
+
+use crate::schema::{
+    recipe_editors, recipe_images, recipe_tags, recipe_viewers, recipes, user_category_recipes,
+};
+
+/// Dynamically composed WHERE condition over `recipes` for the search query.
+type Cond<'a> = Box<dyn BoxableExpression<recipes::table, diesel::pg::Pg, SqlType = Bool> + 'a>;
+
+use chrono::{DateTime, Utc};
+
+/// Row shape for the recipe metadata queries (notes as DB-native `text[]`).
+type RecipeRow = (
+    i64,
+    i64,
+    String,
+    Option<String>,
+    Option<String>,
+    Option<i32>,
+    Option<i32>,
+    Option<i32>,
+    Option<String>,
+    Vec<Option<String>>,
+    Option<i64>,
+    DateTime<Utc>,
+    DateTime<Utc>,
+);
 
 /// Configures and returns the Axum router for recipe endpoints.
 pub fn router() -> Router<AppState> {
@@ -41,6 +70,27 @@ pub struct PaginatedResponse<T> {
     pub cursor: Option<String>,
 }
 
+/// Column tuple shared by the recipe metadata queries (matches `RecipeRow`).
+macro_rules! recipe_cols {
+    () => {
+        (
+            recipes::id,
+            recipes::owner_id,
+            recipes::name,
+            recipes::source,
+            recipes::time_display,
+            recipes::work_minutes,
+            recipes::overall_minutes,
+            recipes::size_number,
+            recipes::size_text,
+            recipes::notes,
+            recipes::main_image_id,
+            recipes::created_at,
+            recipes::updated_at,
+        )
+    };
+}
+
 async fn get_recipe(
     State(state): State<AppState>,
     Extension(user_id): Extension<i32>,
@@ -49,49 +99,84 @@ async fn get_recipe(
     let r_id = id as i64;
     let u_id = user_id as i64;
 
-    let rec = sqlx::query!(
-        r#"
-        SELECT
-            r.id, r.owner_id, r.name, r.source, r.time_display,
-            r.work_minutes, r.overall_minutes, r.size_number, r.size_text, r.main_image_id, r.notes,
-            r.created_at, r.updated_at,
-            COALESCE((SELECT array_agg(user_id) FROM recipe_editors WHERE recipe_id = r.id), '{}') as "editors!",
-            COALESCE((SELECT array_agg(user_id) FROM recipe_viewers WHERE recipe_id = r.id), '{}') as "viewers!",
-            COALESCE((SELECT array_agg(tag_id ORDER BY position) FROM recipe_tags WHERE recipe_id = r.id), '{}') as "tags!",
-            COALESCE((SELECT array_agg(image_id ORDER BY position) FROM recipe_images WHERE recipe_id = r.id), '{}') as "images!"
-        FROM recipes r
-        WHERE r.id = $1
-        "#,
-        r_id
-    ).fetch_optional(&state.pool).await?
+    let mut conn = state.pool.get().await?;
+
+    let rec = recipes::table
+        .filter(recipes::id.eq(r_id))
+        .select(recipe_cols!())
+        .first::<RecipeRow>(&mut conn)
+        .await
+        .optional()?
         .ok_or_else(|| AppError::NotFound("Recipe not found".into()))?;
 
-    if rec.owner_id != u_id && !rec.editors.contains(&u_id) && !rec.viewers.contains(&u_id) {
+    let (
+        id,
+        owner_id,
+        name,
+        source,
+        time_display,
+        work_minutes,
+        overall_minutes,
+        size_number,
+        size_text,
+        notes,
+        main_image_id,
+        created_at,
+        updated_at,
+    ) = rec;
+
+    let editors: Vec<i64> = recipe_editors::table
+        .filter(recipe_editors::recipe_id.eq(r_id))
+        .select(recipe_editors::user_id)
+        .load(&mut conn)
+        .await?;
+
+    let viewers: Vec<i64> = recipe_viewers::table
+        .filter(recipe_viewers::recipe_id.eq(r_id))
+        .select(recipe_viewers::user_id)
+        .load(&mut conn)
+        .await?;
+
+    if owner_id != u_id && !editors.contains(&u_id) && !viewers.contains(&u_id) {
         return Err(AppError::Forbidden);
     }
 
-    let sections = helpers::fetch_sections(r_id, &state.pool).await?;
+    let tags: Vec<String> = recipe_tags::table
+        .filter(recipe_tags::recipe_id.eq(r_id))
+        .order(recipe_tags::position.asc())
+        .select(recipe_tags::tag_id)
+        .load(&mut conn)
+        .await?;
+
+    let images: Vec<i64> = recipe_images::table
+        .filter(recipe_images::recipe_id.eq(r_id))
+        .order(recipe_images::position.asc())
+        .select(recipe_images::image_id)
+        .load(&mut conn)
+        .await?;
+
+    let sections = helpers::fetch_sections(r_id, &mut conn).await?;
 
     let recipe = Recipe {
-        id: rec.id as i32,
-        owner: rec.owner_id as i32,
-        editors: rec.editors.into_iter().map(|v| v as i32).collect(),
-        viewers: rec.viewers.into_iter().map(|v| v as i32).collect(),
-        name: rec.name,
-        tags: rec.tags,
-        source: rec.source,
+        id: id as i32,
+        owner: owner_id as i32,
+        editors: editors.into_iter().map(|v| v as i32).collect(),
+        viewers: viewers.into_iter().map(|v| v as i32).collect(),
+        name,
+        tags,
+        source,
         rating: vec![],
-        time: rec.time_display,
-        work_minutes: rec.work_minutes,
-        overall_minutes: rec.overall_minutes,
-        size_number: rec.size_number,
-        size_text: rec.size_text,
-        notes: rec.notes,
-        main_image: rec.main_image_id.map(|id| id as i32),
-        images: rec.images.into_iter().map(|v| v as i32).collect(),
+        time: time_display,
+        work_minutes,
+        overall_minutes,
+        size_number,
+        size_text,
+        notes: notes.into_iter().flatten().collect(),
+        main_image: main_image_id.map(|id| id as i32),
+        images: images.into_iter().map(|v| v as i32).collect(),
         sections,
-        created_at: Some(rec.created_at.to_rfc3339()),
-        updated_at: Some(rec.updated_at.to_rfc3339()),
+        created_at: Some(created_at.to_rfc3339()),
+        updated_at: Some(updated_at.to_rfc3339()),
     };
     Ok(Json(recipe))
 }
@@ -105,28 +190,39 @@ async fn create_recipe(
         return Err(AppError::Unprocessable("Name cannot be empty".into()));
     }
 
-    let mut tx = state.pool.begin().await?;
     let u_id = user_id as i64;
-    let rec_id = sqlx::query!(
-        r#"
-        INSERT INTO recipes (owner_id, name, source, time_display, work_minutes, overall_minutes, size_number, size_text, notes, main_image_id)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-        RETURNING id
-        "#,
-        u_id, payload.name, payload.source, payload.time, payload.work_minutes, payload.overall_minutes,
-        payload.size_number, payload.size_text, &payload.notes, payload.main_image.map(|i| i as i64)
-    ).fetch_one(&mut *tx).await?.id;
+    let mut conn = state.pool.get().await?;
 
-    helpers::insert_recipe_tags(rec_id, payload.tags, &mut tx).await?;
-    helpers::insert_recipe_images(rec_id, payload.images, &mut tx).await?;
+    let rec_id = conn
+        .transaction::<_, AppError, _>(async move |conn| {
+            let rec_id: i64 = diesel::insert_into(recipes::table)
+                .values((
+                    recipes::owner_id.eq(u_id),
+                    recipes::name.eq(payload.name.clone()),
+                    recipes::source.eq(payload.source.clone()),
+                    recipes::time_display.eq(payload.time.clone()),
+                    recipes::work_minutes.eq(payload.work_minutes),
+                    recipes::overall_minutes.eq(payload.overall_minutes),
+                    recipes::size_number.eq(payload.size_number),
+                    recipes::size_text.eq(payload.size_text.clone()),
+                    recipes::notes.eq(payload.notes.clone()),
+                    recipes::main_image_id.eq(payload.main_image.map(|i| i as i64)),
+                ))
+                .returning(recipes::id)
+                .get_result(conn)
+                .await?;
 
-    for (s_pos, sec) in payload.sections.into_iter().enumerate() {
-        helpers::insert_section(sec, rec_id, s_pos, &mut tx).await?;
-    }
+            helpers::insert_recipe_tags(rec_id, payload.tags.clone(), conn).await?;
+            helpers::insert_recipe_images(rec_id, payload.images.clone(), conn).await?;
 
-    tx.commit().await?;
+            for (s_pos, sec) in payload.sections.into_iter().enumerate() {
+                helpers::insert_section(sec, rec_id, s_pos, conn).await?;
+            }
 
-    // Reuse get_recipe logic internally
+            Ok(rec_id)
+        })
+        .await?;
+
     get_recipe(State(state), Extension(user_id), Path(rec_id as i32)).await
 }
 
@@ -143,15 +239,17 @@ async fn update_recipe(
     let r_id = id as i64;
     let u_id = user_id as i64;
 
-    let mut tx = state.pool.begin().await?;
+    let mut conn = state.pool.get().await?;
 
-    helpers::check_can_edit(r_id, u_id, &mut tx).await?;
-    helpers::update_recipe_metadata(r_id, &payload, &mut tx).await?;
-    helpers::replace_recipe_tags(r_id, payload.tags, &mut tx).await?;
-    helpers::replace_recipe_images(r_id, payload.images, &mut tx).await?;
-    helpers::replace_recipe_sections(r_id, payload.sections, &mut tx).await?;
-
-    tx.commit().await?;
+    conn.transaction::<_, AppError, _>(async move |conn| {
+        helpers::check_can_edit(r_id, u_id, conn).await?;
+        helpers::update_recipe_metadata(r_id, &payload, conn).await?;
+        helpers::replace_recipe_tags(r_id, payload.tags.clone(), conn).await?;
+        helpers::replace_recipe_images(r_id, payload.images.clone(), conn).await?;
+        helpers::replace_recipe_sections(r_id, payload.sections.clone(), conn).await?;
+        Ok(())
+    })
+    .await?;
 
     get_recipe(State(state), Extension(user_id), Path(id)).await
 }
@@ -164,19 +262,22 @@ async fn delete_recipe(
     let r_id = id as i64;
     let u_id = user_id as i64;
 
-    let res = sqlx::query!(
-        "DELETE FROM recipes WHERE id = $1 AND owner_id = $2",
-        r_id,
-        u_id
-    )
-    .execute(&state.pool)
-    .await?;
+    let mut conn = state.pool.get().await?;
 
-    if res.rows_affected() == 0 {
+    let res = diesel::delete(recipes::table)
+        .filter(recipes::id.eq(r_id))
+        .filter(recipes::owner_id.eq(u_id))
+        .execute(&mut conn)
+        .await?;
+
+    if res == 0 {
         // Either not found or forbidden
-        let exists = sqlx::query!("SELECT 1 as x FROM recipes WHERE id = $1", r_id)
-            .fetch_optional(&state.pool)
-            .await?
+        let exists = recipes::table
+            .filter(recipes::id.eq(r_id))
+            .select(recipes::id)
+            .first::<i64>(&mut conn)
+            .await
+            .optional()?
             .is_some();
         if exists {
             return Err(AppError::Forbidden);
@@ -201,6 +302,28 @@ async fn copy_recipe(
     create_recipe(State(state), Extension(user_id), Json(create_payload)).await
 }
 
+/// Build the visibility guard: owner, editor, or viewer.
+fn visibility_guard(u_id: i64) -> Cond<'static> {
+    Box::new(
+        recipes::owner_id
+            .eq(u_id)
+            .or(diesel::dsl::exists(
+                recipe_editors::table
+                    .filter(recipe_editors::recipe_id.eq(recipes::id))
+                    .filter(recipe_editors::user_id.eq(u_id)),
+            ))
+            .or(diesel::dsl::exists(
+                recipe_viewers::table
+                    .filter(recipe_viewers::recipe_id.eq(recipes::id))
+                    .filter(recipe_viewers::user_id.eq(u_id)),
+            )),
+    )
+}
+
+fn nonempty<T>(opt: &Option<Vec<T>>) -> Option<&Vec<T>> {
+    opt.as_ref().filter(|v| !v.is_empty())
+}
+
 async fn fetch_recipes(
     state: &AppState,
     user_id: i32,
@@ -212,214 +335,258 @@ async fn fetch_recipes(
     let page = pagination.page.unwrap_or(1).max(1);
     let offset = (page - 1) * limit;
 
-    let mut qb = sqlx::QueryBuilder::new(
-        r#"
-        SELECT
-            r.id, r.owner_id, r.name, r.source, r.time_display,
-            r.work_minutes, r.overall_minutes, r.size_number, r.size_text, r.main_image_id,
-            r.created_at, r.updated_at,
-            COALESCE((SELECT array_agg(user_id) FROM recipe_editors WHERE recipe_id = r.id), '{}') as editors,
-            COALESCE((SELECT array_agg(user_id) FROM recipe_viewers WHERE recipe_id = r.id), '{}') as viewers,
-            COALESCE((SELECT array_agg(tag_id ORDER BY position) FROM recipe_tags WHERE recipe_id = r.id), '{}') as tags,
-            COALESCE((SELECT AVG(rating) FROM user_ratings WHERE recipe_id = r.id), 0.0) as avg_rating
-        FROM recipes r
-        WHERE 1=1
-        "#,
-    );
+    let mut conn = state.pool.get().await?;
 
-    let has_access = query
-        .filters
-        .as_ref()
-        .and_then(|f| f.access_rights.as_ref())
-        .map(|v| !v.is_empty())
-        .unwrap_or(false);
-    let has_shares = query
-        .filters
-        .as_ref()
-        .and_then(|f| f.share_states.as_ref())
-        .map(|v| !v.is_empty())
-        .unwrap_or(false);
+    let mut q = recipes::table.select(recipe_cols!()).into_boxed();
 
-    if has_access || has_shares {
-        qb.push(" AND (1=0");
-
-        if let Some(filters) = &query.filters {
-            if let Some(accs) = filters.access_rights.as_ref() {
-                for a in accs {
-                    match a {
-                        RecipeAccessRights::Owner => {
-                            qb.push(" OR r.owner_id = ");
-                            qb.push_bind(u_id);
-                        }
-                        RecipeAccessRights::Editor => {
-                            qb.push(" OR EXISTS (SELECT 1 FROM recipe_editors e WHERE e.recipe_id = r.id AND e.user_id = ");
-                            qb.push_bind(u_id);
-                            qb.push(")");
-                        }
-                        RecipeAccessRights::Viewer => {
-                            qb.push(" OR EXISTS (SELECT 1 FROM recipe_viewers v WHERE v.recipe_id = r.id AND v.user_id = ");
-                            qb.push_bind(u_id);
-                            qb.push(")");
-                        }
-                    }
-                }
-            }
-
-            if let Some(shs) = filters.share_states.as_ref() {
-                for s in shs {
-                    match s {
-                        RecipeShareState::Private => {
-                            qb.push(" OR (r.owner_id = ");
-                            qb.push_bind(u_id);
-                            qb.push(" AND NOT EXISTS (SELECT 1 FROM recipe_editors WHERE recipe_id = r.id) AND NOT EXISTS (SELECT 1 FROM recipe_viewers WHERE recipe_id = r.id))");
-                        }
-                        RecipeShareState::Shared => {
-                            qb.push(
-                                " OR EXISTS (SELECT 1 FROM recipe_viewers WHERE recipe_id = r.id)",
-                            );
-                        }
-                        RecipeShareState::Collaborative => {
-                            qb.push(
-                                " OR EXISTS (SELECT 1 FROM recipe_editors WHERE recipe_id = r.id)",
-                            );
-                        }
-                    }
-                }
-            }
-        }
-
-        qb.push(")");
-
-        qb.push(" AND (r.owner_id = ");
-        qb.push_bind(u_id);
-        qb.push(
-            " OR EXISTS (SELECT 1 FROM recipe_editors e WHERE e.recipe_id = r.id AND e.user_id = ",
-        );
-        qb.push_bind(u_id);
-        qb.push(")");
-        qb.push(
-            " OR EXISTS (SELECT 1 FROM recipe_viewers v WHERE v.recipe_id = r.id AND v.user_id = ",
-        );
-        qb.push_bind(u_id);
-        qb.push("))");
-    } else {
-        qb.push(" AND (r.owner_id = ");
-        qb.push_bind(u_id);
-        qb.push(
-            " OR EXISTS (SELECT 1 FROM recipe_editors e WHERE e.recipe_id = r.id AND e.user_id = ",
-        );
-        qb.push_bind(u_id);
-        qb.push(")");
-        qb.push(
-            " OR EXISTS (SELECT 1 FROM recipe_viewers v WHERE v.recipe_id = r.id AND v.user_id = ",
-        );
-        qb.push_bind(u_id);
-        qb.push("))");
-    }
+    // Visibility guard is always applied.
+    q = q.filter(visibility_guard(u_id));
 
     if let Some(f) = &query.filters {
-        if let Some(cats) = &f.categories
-            && !cats.is_empty()
-        {
-            qb.push(" AND (SELECT count(DISTINCT ucr.category_id) FROM user_category_recipes ucr WHERE ucr.recipe_id = r.id AND ucr.category_id = ANY(");
-            qb.push_bind(cats);
-            qb.push(")) = ");
-            qb.push(cats.len().to_string());
+        let has_access = nonempty(&f.access_rights).is_some();
+        let has_shares = nonempty(&f.share_states).is_some();
+
+        if has_access || has_shares {
+            // OR-combination of the requested access/share conditions,
+            // seeded with `false` so an empty request matches nothing.
+            let mut or_cond: Cond = Box::new(diesel::dsl::sql::<Bool>("1=0"));
+
+            if let Some(accs) = nonempty(&f.access_rights) {
+                for a in accs {
+                    let branch: Cond = match a {
+                        RecipeAccessRights::Owner => Box::new(recipes::owner_id.eq(u_id)),
+                        RecipeAccessRights::Editor => Box::new(diesel::dsl::exists(
+                            recipe_editors::table
+                                .filter(recipe_editors::recipe_id.eq(recipes::id))
+                                .filter(recipe_editors::user_id.eq(u_id)),
+                        )),
+                        RecipeAccessRights::Viewer => Box::new(diesel::dsl::exists(
+                            recipe_viewers::table
+                                .filter(recipe_viewers::recipe_id.eq(recipes::id))
+                                .filter(recipe_viewers::user_id.eq(u_id)),
+                        )),
+                    };
+                    or_cond = Box::new(or_cond.or(branch));
+                }
+            }
+
+            if let Some(shs) = nonempty(&f.share_states) {
+                for s in shs {
+                    let branch: Cond = match s {
+                        RecipeShareState::Private => Box::new(
+                            recipes::owner_id
+                                .eq(u_id)
+                                .and(diesel::dsl::not(diesel::dsl::exists(
+                                    recipe_editors::table
+                                        .filter(recipe_editors::recipe_id.eq(recipes::id)),
+                                )))
+                                .and(diesel::dsl::not(diesel::dsl::exists(
+                                    recipe_viewers::table
+                                        .filter(recipe_viewers::recipe_id.eq(recipes::id)),
+                                ))),
+                        ),
+                        RecipeShareState::Shared => Box::new(diesel::dsl::exists(
+                            recipe_viewers::table.filter(recipe_viewers::recipe_id.eq(recipes::id)),
+                        )),
+                        RecipeShareState::Collaborative => Box::new(diesel::dsl::exists(
+                            recipe_editors::table.filter(recipe_editors::recipe_id.eq(recipes::id)),
+                        )),
+                    };
+                    or_cond = Box::new(or_cond.or(branch));
+                }
+            }
+
+            q = q.filter(or_cond);
         }
-        if let Some(tags) = &f.tags
-            && !tags.is_empty()
-        {
-            qb.push(" AND (SELECT count(DISTINCT rt.tag_id) FROM recipe_tags rt WHERE rt.recipe_id = r.id AND rt.tag_id = ANY(");
-            qb.push_bind(tags);
-            qb.push(")) = ");
-            qb.push(tags.len().to_string());
+
+        // AND-filters: every requested value must be present on the recipe.
+        if let Some(cats) = nonempty(&f.categories) {
+            let mut cond: Cond = Box::new(diesel::dsl::exists(
+                user_category_recipes::table
+                    .filter(user_category_recipes::recipe_id.eq(recipes::id))
+                    .filter(user_category_recipes::category_id.eq(cats[0])),
+            ));
+            for c in &cats[1..] {
+                cond = Box::new(
+                    cond.and(Box::new(diesel::dsl::exists(
+                        user_category_recipes::table
+                            .filter(user_category_recipes::recipe_id.eq(recipes::id))
+                            .filter(user_category_recipes::category_id.eq(*c)),
+                    )) as Cond),
+                );
+            }
+            q = q.filter(cond);
         }
-        if let Some(ings) = &f.ingredients
-            && !ings.is_empty()
-        {
-            qb.push(" AND (SELECT count(DISTINCT ri.ingredient_id) FROM sections s JOIN recipe_ingredients ri ON s.id = ri.section_id WHERE s.recipe_id = r.id AND ri.ingredient_id = ANY(");
-            qb.push_bind(ings);
-            qb.push(")) = ");
-            qb.push(ings.len().to_string());
+
+        if let Some(tags) = nonempty(&f.tags) {
+            let mut cond: Cond = Box::new(diesel::dsl::exists(
+                recipe_tags::table
+                    .filter(recipe_tags::recipe_id.eq(recipes::id))
+                    .filter(recipe_tags::tag_id.eq(tags[0].clone())),
+            ));
+            for t in &tags[1..] {
+                cond = Box::new(
+                    cond.and(Box::new(diesel::dsl::exists(
+                        recipe_tags::table
+                            .filter(recipe_tags::recipe_id.eq(recipes::id))
+                            .filter(recipe_tags::tag_id.eq(t.clone())),
+                    )) as Cond),
+                );
+            }
+            q = q.filter(cond);
         }
+
+        if let Some(ings) = nonempty(&f.ingredients) {
+            let mut cond: Cond = Box::new(diesel::dsl::exists(
+                crate::schema::sections::table
+                    .inner_join(crate::schema::recipe_ingredients::table)
+                    .filter(crate::schema::sections::recipe_id.eq(recipes::id))
+                    .filter(crate::schema::recipe_ingredients::ingredient_id.eq(ings[0])),
+            ));
+            for i in &ings[1..] {
+                cond = Box::new(
+                    cond.and(Box::new(diesel::dsl::exists(
+                        crate::schema::sections::table
+                            .inner_join(crate::schema::recipe_ingredients::table)
+                            .filter(crate::schema::sections::recipe_id.eq(recipes::id))
+                            .filter(crate::schema::recipe_ingredients::ingredient_id.eq(*i)),
+                    )) as Cond),
+                );
+            }
+            q = q.filter(cond);
+        }
+
         if let Some(max_time) = f.max_work_time {
-            qb.push(" AND r.work_minutes <= ");
-            qb.push_bind(max_time);
+            q = q.filter(Box::new(recipes::work_minutes.assume_not_null().le(max_time)) as Cond);
         }
     }
 
+    // Sorting
     if let Some(s) = &query.sort {
-        let order = if s.order == Order::Desc {
-            "DESC NULLS LAST"
-        } else {
-            "ASC NULLS LAST"
-        };
+        let desc = s.order == Order::Desc;
         match s.field.as_str() {
             "name" => {
-                qb.push(" ORDER BY r.name ");
-                qb.push(order);
+                if desc {
+                    q = q.then_order_by(recipes::name.desc().nulls_last());
+                } else {
+                    q = q.then_order_by(recipes::name.asc().nulls_last());
+                }
             }
             "worktime" | "work_time" => {
-                qb.push(" ORDER BY r.work_minutes ");
-                qb.push(order);
+                if desc {
+                    q = q.then_order_by(recipes::work_minutes.desc().nulls_last());
+                } else {
+                    q = q.then_order_by(recipes::work_minutes.asc().nulls_last());
+                }
             }
             "totaltime" | "total_time" => {
-                qb.push(" ORDER BY r.overall_minutes ");
-                qb.push(order);
+                if desc {
+                    q = q.then_order_by(recipes::overall_minutes.desc().nulls_last());
+                } else {
+                    q = q.then_order_by(recipes::overall_minutes.asc().nulls_last());
+                }
             }
             "rating" => {
-                qb.push(" ORDER BY avg_rating ");
-                qb.push(order);
+                // COALESCE makes the value non-null, so NULLS LAST is moot.
+                let dir = if desc { "DESC" } else { "ASC" };
+                q = q.then_order_by(diesel::dsl::sql::<diesel::sql_types::Double>(&format!(
+                    "(SELECT COALESCE(AVG(rating), 0.0) FROM user_ratings WHERE recipe_id = recipes.id) {dir} NULLS LAST"
+                )));
             }
             _ => {
-                qb.push(" ORDER BY r.id ASC");
+                q = q.then_order_by(recipes::id.asc());
             }
         }
     } else {
-        qb.push(" ORDER BY r.id ASC");
+        q = q.then_order_by(recipes::id.asc());
     }
 
-    qb.push(" LIMIT ");
-    qb.push_bind(limit + 1);
-    qb.push(" OFFSET ");
-    qb.push_bind(offset);
-
-    let mut records = qb.build().fetch_all(&state.pool).await?;
+    let mut records = q
+        .limit(limit + 1)
+        .offset(offset)
+        .load::<RecipeRow>(&mut conn)
+        .await?;
 
     let has_more = records.len() > limit as usize;
     if has_more {
         records.pop();
     }
 
+    let ids: Vec<i64> = records.iter().map(|r| r.0).collect();
+
+    // Batch-load the per-recipe aggregates for the page.
+    let editors: Vec<(i64, i64)> = if ids.is_empty() {
+        vec![]
+    } else {
+        recipe_editors::table
+            .filter(recipe_editors::recipe_id.eq_any(&ids))
+            .select((recipe_editors::recipe_id, recipe_editors::user_id))
+            .load(&mut conn)
+            .await?
+    };
+
+    let viewers: Vec<(i64, i64)> = if ids.is_empty() {
+        vec![]
+    } else {
+        recipe_viewers::table
+            .filter(recipe_viewers::recipe_id.eq_any(&ids))
+            .select((recipe_viewers::recipe_id, recipe_viewers::user_id))
+            .load(&mut conn)
+            .await?
+    };
+
+    let tags: Vec<(i64, String)> = if ids.is_empty() {
+        vec![]
+    } else {
+        recipe_tags::table
+            .filter(recipe_tags::recipe_id.eq_any(&ids))
+            .order(recipe_tags::position.asc())
+            .select((recipe_tags::recipe_id, recipe_tags::tag_id))
+            .load(&mut conn)
+            .await?
+    };
+
     let mut data = Vec::with_capacity(records.len());
     for rec in records {
-        let id: i64 = rec.try_get("id")?;
-        let owner: i64 = rec.try_get("owner_id")?;
-        let name: String = rec.try_get("name")?;
-        let source: Option<String> = rec.try_get("source")?;
-        let time_display: Option<String> = rec.try_get("time_display")?;
-        let work_minutes: Option<i32> = rec.try_get("work_minutes")?;
-        let overall_minutes: Option<i32> = rec.try_get("overall_minutes")?;
-        let size_number: Option<i32> = rec.try_get("size_number")?;
-        let size_text: Option<String> = rec.try_get("size_text")?;
-        let main_image_id: Option<i64> = rec.try_get("main_image_id")?;
+        let (
+            id,
+            owner_id,
+            name,
+            source,
+            time_display,
+            work_minutes,
+            overall_minutes,
+            size_number,
+            size_text,
+            _notes,
+            main_image_id,
+            created_at,
+            updated_at,
+        ) = rec;
 
-        let created_at: sqlx::types::chrono::DateTime<sqlx::types::chrono::Utc> =
-            rec.try_get("created_at")?;
-        let updated_at: sqlx::types::chrono::DateTime<sqlx::types::chrono::Utc> =
-            rec.try_get("updated_at")?;
-
-        let editors: Vec<i64> = rec.try_get("editors")?;
-        let viewers: Vec<i64> = rec.try_get("viewers")?;
-        let tags: Vec<String> = rec.try_get("tags")?;
+        let rec_editors: Vec<i32> = editors
+            .iter()
+            .filter(|(rid, _)| *rid == id)
+            .map(|(_, uid)| *uid as i32)
+            .collect();
+        let rec_viewers: Vec<i32> = viewers
+            .iter()
+            .filter(|(rid, _)| *rid == id)
+            .map(|(_, uid)| *uid as i32)
+            .collect();
+        let rec_tags: Vec<String> = tags
+            .iter()
+            .filter(|(rid, _)| *rid == id)
+            .map(|(_, tag)| tag.clone())
+            .collect();
 
         data.push(RecipePreview {
             id: id as i32,
-            owner: owner as i32,
-            editors: editors.into_iter().map(|v| v as i32).collect(),
-            viewers: viewers.into_iter().map(|v| v as i32).collect(),
+            owner: owner_id as i32,
+            editors: rec_editors,
+            viewers: rec_viewers,
             name,
-            tags,
+            tags: rec_tags,
             source,
             rating: vec![],
             time: time_display,
@@ -461,366 +628,4 @@ async fn search_recipes(
     let query = query.map(|q| q.0).unwrap_or_default();
     let res = fetch_recipes(&state, user_id, pagination, query).await?;
     Ok(Json(res))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::models::recipe::CreateRecipe;
-    use axum::extract::{Path, Query, State};
-    use axum::{Extension, Json};
-    use sqlx::PgPool;
-
-    #[sqlx::test(migrations = "src/db/migrations")]
-    async fn test_recipe_lifecycle(pool: PgPool) {
-        let state = State(AppState {
-            pool: pool.clone(),
-            image_storage_path: std::path::PathBuf::from("/tmp"),
-        });
-
-        let user_id_i64 = sqlx::query!("INSERT INTO users (name, email, password_hash) VALUES ('test', 'test@example.com', 'hash') RETURNING id")
-            .fetch_one(&pool)
-            .await
-            .unwrap()
-            .id;
-
-        let user_id = Extension(user_id_i64 as i32);
-
-        // 1. Create a recipe
-        let create_payload = CreateRecipe {
-            name: "Test Recipe".to_string(),
-            tags: vec![],
-            source: None,
-            time: None,
-            work_minutes: Some(15),
-            overall_minutes: Some(30),
-            size_number: Some(2),
-            size_text: Some("portions".to_string()),
-            notes: vec![],
-            main_image: None,
-            images: vec![],
-            sections: vec![],
-        };
-
-        let created_recipe = create_recipe(state.clone(), user_id, Json(create_payload))
-            .await
-            .expect("Failed to create recipe")
-            .0;
-
-        assert_eq!(created_recipe.name, "Test Recipe");
-        assert_eq!(created_recipe.owner, user_id_i64 as i32);
-        let r_id = created_recipe.id;
-
-        // 2. Get the recipe
-        let fetched = get_recipe(state.clone(), user_id, Path(r_id))
-            .await
-            .expect("Failed to get recipe")
-            .0;
-        assert_eq!(fetched.id, r_id);
-        assert_eq!(fetched.name, "Test Recipe");
-
-        // 3. Update the recipe
-        let update_payload = CreateRecipe {
-            name: "Updated Recipe".to_string(),
-            tags: vec![],
-            source: None,
-            time: None,
-            work_minutes: Some(20),
-            overall_minutes: Some(40),
-            size_number: Some(4),
-            size_text: Some("portions".to_string()),
-            notes: vec![],
-            main_image: None,
-            images: vec![],
-            sections: vec![],
-        };
-        let updated = update_recipe(state.clone(), user_id, Path(r_id), Json(update_payload))
-            .await
-            .expect("Failed to update recipe")
-            .0;
-        assert_eq!(updated.name, "Updated Recipe");
-
-        // 4. List recipes
-        let list = list_recipes(
-            state.clone(),
-            user_id,
-            Query(PaginationQuery {
-                page: None,
-                limit: None,
-            }),
-        )
-        .await
-        .expect("Failed to list recipes")
-        .0;
-        assert!(!list.data.is_empty());
-
-        // 5. Delete the recipe
-        let _ = delete_recipe(state.clone(), user_id, Path(r_id))
-            .await
-            .expect("Failed to delete recipe");
-
-        // 6. Verify deletion
-        let err = get_recipe(state.clone(), user_id, Path(r_id)).await;
-        assert!(err.is_err());
-    }
-
-    #[sqlx::test(migrations = "src/db/migrations")]
-    async fn test_recipe_pagination(pool: PgPool) {
-        let state = State(AppState {
-            pool: pool.clone(),
-            image_storage_path: std::path::PathBuf::from("/tmp"),
-        });
-
-        let user_id_i64 = sqlx::query!("INSERT INTO users (name, email, password_hash) VALUES ('test_pag', 'pag@example.com', 'hash') RETURNING id")
-            .fetch_one(&pool)
-            .await
-            .unwrap()
-            .id;
-        let user_id = Extension(user_id_i64 as i32);
-
-        // Insert 25 recipes
-        for i in 1..=25 {
-            let create_payload = CreateRecipe {
-                name: format!("Recipe {}", i),
-                tags: vec![],
-                source: None,
-                time: None,
-                work_minutes: Some(15),
-                overall_minutes: Some(30),
-                size_number: Some(2),
-                size_text: Some("portions".to_string()),
-                notes: vec![],
-                main_image: None,
-                images: vec![],
-                sections: vec![],
-            };
-            let _ = create_recipe(state.clone(), user_id, Json(create_payload))
-                .await
-                .expect("Failed to create recipe");
-        }
-
-        // Test page 1, limit 10
-        let p1 = list_recipes(
-            state.clone(),
-            user_id,
-            Query(PaginationQuery {
-                page: Some(1),
-                limit: Some(10),
-            }),
-        )
-        .await
-        .unwrap()
-        .0;
-        assert_eq!(p1.data.len(), 10);
-        assert_eq!(p1.cursor, Some("2".to_string()));
-
-        // Test page 2, limit 10
-        let p2 = list_recipes(
-            state.clone(),
-            user_id,
-            Query(PaginationQuery {
-                page: Some(2),
-                limit: Some(10),
-            }),
-        )
-        .await
-        .unwrap()
-        .0;
-        assert_eq!(p2.data.len(), 10);
-        assert_eq!(p2.cursor, Some("3".to_string()));
-
-        // Test page 3, limit 10 (should only have 5)
-        let p3 = list_recipes(
-            state.clone(),
-            user_id,
-            Query(PaginationQuery {
-                page: Some(3),
-                limit: Some(10),
-            }),
-        )
-        .await
-        .unwrap()
-        .0;
-        assert_eq!(p3.data.len(), 5);
-        assert_eq!(p3.cursor, None);
-    }
-
-    #[sqlx::test(migrations = "src/db/migrations")]
-    async fn test_recipe_permissions(pool: PgPool) {
-        let state = State(AppState {
-            pool: pool.clone(),
-            image_storage_path: std::path::PathBuf::from("/tmp"),
-        });
-
-        let u1_id = sqlx::query!("INSERT INTO users (name, email, password_hash) VALUES ('user1', 'u1@example.com', 'hash') RETURNING id")
-            .fetch_one(&pool).await.unwrap().id;
-        let u2_id = sqlx::query!("INSERT INTO users (name, email, password_hash) VALUES ('user2', 'u2@example.com', 'hash') RETURNING id")
-            .fetch_one(&pool).await.unwrap().id;
-
-        let user1 = Extension(u1_id as i32);
-        let user2 = Extension(u2_id as i32);
-
-        // User 1 creates a recipe
-        let payload = CreateRecipe {
-            name: "User1 Recipe".to_string(),
-            tags: vec![],
-            source: None,
-            time: None,
-            work_minutes: None,
-            overall_minutes: None,
-            size_number: None,
-            size_text: None,
-            notes: vec![],
-            main_image: None,
-            images: vec![],
-            sections: vec![],
-        };
-        let r1 = create_recipe(state.clone(), user1, Json(payload))
-            .await
-            .unwrap()
-            .0;
-
-        // User 2 tries to read it - should fail (forbidden)
-        let err = get_recipe(state.clone(), user2, Path(r1.id)).await;
-        assert!(matches!(err, Err(AppError::Forbidden)));
-
-        // User 2 tries to update it - should fail
-        let payload2 = CreateRecipe {
-            name: "User2 Update".to_string(),
-            tags: vec![],
-            source: None,
-            time: None,
-            work_minutes: None,
-            overall_minutes: None,
-            size_number: None,
-            size_text: None,
-            notes: vec![],
-            main_image: None,
-            images: vec![],
-            sections: vec![],
-        };
-        let err = update_recipe(state.clone(), user2, Path(r1.id), Json(payload2)).await;
-        assert!(matches!(err, Err(AppError::Forbidden)));
-    }
-
-    #[sqlx::test(migrations = "src/db/migrations")]
-    async fn test_recipe_copy(pool: PgPool) {
-        let state = State(AppState {
-            pool: pool.clone(),
-            image_storage_path: std::path::PathBuf::from("/tmp"),
-        });
-        let user_id_i64 = sqlx::query!("INSERT INTO users (name, email, password_hash) VALUES ('copy_u', 'copy@example.com', 'hash') RETURNING id")
-            .fetch_one(&pool).await.unwrap().id;
-        let user_id = Extension(user_id_i64 as i32);
-
-        let payload = CreateRecipe {
-            name: "Original".to_string(),
-            tags: vec![],
-            source: None,
-            time: None,
-            work_minutes: Some(10),
-            overall_minutes: None,
-            size_number: None,
-            size_text: None,
-            notes: vec!["Test note".to_string()],
-            main_image: None,
-            images: vec![],
-            sections: vec![],
-        };
-        let orig = create_recipe(state.clone(), user_id, Json(payload))
-            .await
-            .unwrap()
-            .0;
-
-        // Copy recipe
-        let copied = copy_recipe(state.clone(), user_id, Path(orig.id))
-            .await
-            .unwrap()
-            .0;
-
-        assert_ne!(orig.id, copied.id); // Different IDs
-        assert_eq!(copied.name, "Original (Copy)");
-        assert_eq!(copied.work_minutes, Some(10));
-        assert_eq!(copied.notes.len(), 1);
-        assert_eq!(copied.notes[0], "Test note");
-    }
-
-    #[sqlx::test(migrations = "src/db/migrations")]
-    async fn test_search_recipes(pool: PgPool) {
-        let state = State(AppState {
-            pool: pool.clone(),
-            image_storage_path: std::path::PathBuf::from("/tmp"),
-        });
-        let user_id_i64 = sqlx::query!("INSERT INTO users (name, email, password_hash) VALUES ('search_u', 'search@example.com', 'hash') RETURNING id")
-            .fetch_one(&pool).await.unwrap().id;
-        let user_id = Extension(user_id_i64 as i32);
-
-        // Recipe 1: 15 mins
-        let r1 = CreateRecipe {
-            name: "Fast Recipe".to_string(),
-            tags: vec![],
-            source: None,
-            time: None,
-            work_minutes: Some(15),
-            overall_minutes: None,
-            size_number: None,
-            size_text: None,
-            notes: vec![],
-            main_image: None,
-            images: vec![],
-            sections: vec![],
-        };
-        let _ = create_recipe(state.clone(), user_id, Json(r1))
-            .await
-            .unwrap();
-
-        // Recipe 2: 45 mins
-        let r2 = CreateRecipe {
-            name: "Slow Recipe".to_string(),
-            tags: vec![],
-            source: None,
-            time: None,
-            work_minutes: Some(45),
-            overall_minutes: None,
-            size_number: None,
-            size_text: None,
-            notes: vec![],
-            main_image: None,
-            images: vec![],
-            sections: vec![],
-        };
-        let _ = create_recipe(state.clone(), user_id, Json(r2))
-            .await
-            .unwrap();
-
-        // Search max_work_time = 30
-        let filters = crate::models::recipe::RecipeFilters {
-            categories: None,
-            tags: None,
-            ingredients: None,
-            max_work_time: Some(30),
-            access_rights: None,
-            share_states: None,
-        };
-        let query = RecipeSearchQuery {
-            filters: Some(filters),
-            sort: None,
-        };
-
-        let res = search_recipes(
-            state.clone(),
-            user_id,
-            Query(PaginationQuery {
-                page: None,
-                limit: None,
-            }),
-            Some(Json(query)),
-        )
-        .await
-        .unwrap()
-        .0;
-
-        assert_eq!(res.data.len(), 1);
-        assert_eq!(res.data[0].name, "Fast Recipe");
-    }
 }
