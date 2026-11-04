@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM recipe_images WHERE recipe_id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "12e81f77b781257c873bd7f9997dae908527b15f7db6c1b1a5c58bd8abd28052"
+}

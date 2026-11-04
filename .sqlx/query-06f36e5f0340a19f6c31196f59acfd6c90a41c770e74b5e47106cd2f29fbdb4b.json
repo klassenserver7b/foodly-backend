@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO user_category_recipes (category_id, recipe_id, position) VALUES ($1, $2, $3)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8",
+        "Int4"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "06f36e5f0340a19f6c31196f59acfd6c90a41c770e74b5e47106cd2f29fbdb4b"
+}

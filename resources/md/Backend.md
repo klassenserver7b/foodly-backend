@@ -1,7 +1,7 @@
 
 - PostgreSQL database server
 - Rust API Server
-	- WS Conection to clients
+	- WS Connection to clients
 
 ### WS - Endpoints
 

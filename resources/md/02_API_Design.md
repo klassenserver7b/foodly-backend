@@ -20,23 +20,23 @@ and a consistent JSON error envelope.
 
 ### Pagination
 
-List endpoints that can grow unbounded use **cursor-based pagination**:
+List endpoints that can grow unbounded (like recipes) use **offset-based pagination** via URL query parameters:
 
 ```
-GET /api/v1/recipes?cursor=<opaque>&limit=20
+?page=1&limit=20
 ```
 
-| Parameter | Type             | Default | Description                                       |
-|-----------|------------------|---------|---------------------------------------------------|
-| `cursor`  | `string \| null` | `null`  | Opaque cursor from the previous response. Omit for the first page. |
-| `limit`   | `integer`        | `20`    | Max items per page (server caps at 100).          |
+| Parameter | Type             | Default | Description                                                        |
+|-----------|------------------|---------|--------------------------------------------------------------------|
+| `page`    | `integer`        | `1`     | The page number to fetch (1-indexed).                              |
+| `limit`   | `integer`        | `20`    | Max items per page (server caps at 100).                           |
 
 Response wrapper:
 
 ```json
 {
   "data": [ ... ],
-  "cursor": "eyJpZCI6NDJ9"   // null when no more pages
+  "cursor": "2"   // The next page number as a string, or null when no more pages
 }
 ```
 
@@ -234,10 +234,10 @@ Search for users by name (or partial name) for use in "invite to recipe" or "add
 
 **Query parameters:**
 
-| Parameter | Type     | Required | Description                                                  |
-|-----------|----------|----------|--------------------------------------------------------------|
-| `q`       | `string` | yes      | Search query (min 1 char). Matches against user `name` (case-insensitive, prefix/substring). |
-| `limit`   | `integer`| no       | Max results (default `10`, server cap `50`).                 |
+| Parameter | Type      | Required | Description                                                                                  |
+|-----------|-----------|----------|----------------------------------------------------------------------------------------------|
+| `q`       | `string`  | yes      | Search query (min 1 char). Matches against user `name` (case-insensitive, prefix/substring). |
+| `limit`   | `integer` | no       | Max results (default `10`, server cap `50`).                                                 |
 
 **Response `200 OK`:**
 ```json
@@ -260,9 +260,42 @@ Search for users by name (or partial name) for use in "invite to recipe" or "add
 
 ### `GET /api/v1/recipes`
 
-List recipes accessible to the authenticated user (owned + shared as editor/viewer). Returns **preview data** — a subset of fields optimized for the list view. Sections, ingredients, steps, and notes are **not** included.
+Fetch a paginated list of all recipes accessible to the authenticated user. This is a fast, highly-cacheable endpoint designed for the initial catalog load. It internally uses the same logic as the search endpoint but accepts only pagination parameters in the query string.
 
-**Query parameters:** `cursor`, `limit` (see Pagination above).
+**Query parameters:**
+- `page` (integer, default: 1)
+- `limit` (integer, default: 20)
+
+**Response `200 OK`:** *(Returns the same paginated `RecipePreview` list structure as `POST /api/v1/recipes/search`)*
+
+---
+
+### `POST /api/v1/recipes/search`
+
+Search and list recipes accessible to the authenticated user (owned + shared as editor/viewer). Allows filtering by tags, categories, ingredients, max work time, access rights, and share states. Also supports dynamic sorting (e.g. by rating, name, total time) and uses offset-based pagination. Returns **preview data** — a subset of fields optimized for the list view. Sections, ingredients, steps, and notes are **not** included. If the request body is omitted or empty (`{}`), it behaves identically to a fetch-all endpoint.
+
+**Query parameters:**
+- `page` (integer, default: 1)
+- `limit` (integer, default: 20)
+
+**Request:**
+```json
+{
+  "filters": {
+    "categories": [1, 2],
+    "tags": ["Hauptgericht", "Vegan"],
+    "ingredients": [5],
+    "maxWorkTime": 30,
+    "accessRights": ["owner", "editor", "viewer"],
+    "shareStates": ["private", "shared", "collaborative"]
+  },
+  "sort": {
+    "field": "rating", // "name", "work_time", "total_time", "rating"
+    "order": "desc"    // "asc", "desc"
+  }
+}
+```
+*(All fields are optional. Filters use strict AND logic where arrays are provided.)*
 
 **Response `200 OK`:**
 ```json
@@ -290,11 +323,11 @@ List recipes accessible to the authenticated user (owned + shared as editor/view
       "updatedAt": "2026-03-15T09:30:00Z"
     }
   ],
-  "cursor": "eyJpZCI6MX0"
+  "cursor": "2"
 }
 ```
 
-> **Scope:** The backend **only returns recipes where the user is `owner`, `editor`, or `viewer`**. The frontend does not need to filter by access itself.
+> **Scope:** The backend **only returns recipes where the user is `owner`, `editor`, or `viewer`**. The frontend does not need to filter by access itself. The `cursor` in the response represents the next page number as a string, or `null` if there are no more pages.
 
 ---
 
@@ -799,6 +832,17 @@ Cache-Control: public, max-age=31536000, immutable
 
 ---
 
+### `DELETE /api/v1/images/:hash`
+
+Delete an image by its content hash from both the database and the server's disk.
+
+**Response `204 No Content`**
+
+**Errors:**
+- `404 Not Found` — no image with this hash.
+
+---
+
 ### `GET /api/v1/tags/:id/icon`
 
 Retrieve a tag's SVG icon by tag ID. Returns the raw SVG. Only available for tags where `svg` is non-null.
@@ -813,6 +857,18 @@ Cache-Control: public, max-age=86400
 
 **Errors:**
 - `404 Not Found` — tag has no icon.
+
+---
+
+### `PUT /api/v1/tags/:id/icon`
+
+Upload a new SVG icon for a tag. The body must be a valid SVG file.
+
+**Response `204 No Content`**
+
+**Errors:**
+- `422 Unprocessable Entity` — empty body or invalid SVG format.
+- `404 Not Found` — tag does not exist.
 
 ---
 
@@ -875,19 +931,19 @@ server → client (event):    { type: string, payload?: unknown }   // no id
 
 ### Planned Message Types
 
-| Type               | Direction      | Description                                              |
-|--------------------|----------------|----------------------------------------------------------|
-| `me`               | request        | Get current user profile                                 |
-| `recipes.list`     | request        | List accessible recipes (preview data)                   |
-| `recipes.get`      | request        | Get full recipe by ID                                    |
-| `categories.list`  | request        | List user's categories                                   |
-| `tags.list`        | request        | List all tags                                            |
-| `ingredients.list` | request        | List ingredient catalog                                  |
-| `users.list`       | request        | List all users (for catalog/invite dropdown, deprecated in favor of `users.search`) |
-| `users.search`     | request        | Search users by name for invite dropdowns                |
-| `recipe.updated`   | server event   | A recipe the client is subscribed to was changed         |
-| `recipe.deleted`   | server event   | A recipe was deleted                                     |
-| `sync.submit`      | request        | Submit offline change backlog                            |
+| Type               | Direction    | Description                                                                         |
+|--------------------|--------------|-------------------------------------------------------------------------------------|
+| `me`               | request      | Get current user profile                                                            |
+| `recipes.list`     | request      | List accessible recipes (preview data)                                              |
+| `recipes.get`      | request      | Get full recipe by ID                                                               |
+| `categories.list`  | request      | List user's categories                                                              |
+| `tags.list`        | request      | List all tags                                                                       |
+| `ingredients.list` | request      | List ingredient catalog                                                             |
+| `users.list`       | request      | List all users (for catalog/invite dropdown, deprecated in favor of `users.search`) |
+| `users.search`     | request      | Search users by name for invite dropdowns                                           |
+| `recipe.updated`   | server event | A recipe the client is subscribed to was changed                                    |
+| `recipe.deleted`   | server event | A recipe was deleted                                                                |
+| `sync.submit`      | request      | Submit offline change backlog                                                       |
 
 ---
 

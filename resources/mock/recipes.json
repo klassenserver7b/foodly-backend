@@ -1,0 +1,1884 @@
+[
+  {
+    "id": 1,
+    "owner": 1,
+    "viewers": [],
+    "editors": [2],
+    "name": "Spaghetti {Vegan} Bolognese",
+    "tags": ["Hauptgericht", "Italienisch", "Vegan"],
+    "source": "Omas Rezept",
+    "time": "20 min + {Vegan} {Kochzeit} 25 min",
+    "workMinutes": 20,
+    "overallMinutes": 45,
+    "sizeNumber": 4,
+    "sizeText": "{Vegan} {Portionen}",
+    "notes": ["Schmeckt am nächsten {Vegan} Tag aufgewärmt noch besser. {WIP}"],
+    "mainImage": 1,
+    "images": [3, 4, 5, 6, 7, 8, 9, 10],
+    "sections": [
+      {
+        "id": 1,
+        "name": "{Vegan} Bolognese",
+        "ingredients": [
+          {
+            "id": 101,
+            "ingredient": {
+              "id": 2,
+              "name": "Hackfleisch (Rind)"
+            },
+            "text": null,
+            "amount": "500",
+            "amountPrefix": null,
+            "unit": "g"
+          },
+          {
+            "id": 102,
+            "ingredient": {
+              "id": 4,
+              "name": "Zwiebel"
+            },
+            "text": null,
+            "amount": "1",
+            "amountPrefix": null,
+            "unit": null
+          },
+          {
+            "id": 103,
+            "ingredient": {
+              "id": 5,
+              "name": "Knoblauchzehe"
+            },
+            "text": null,
+            "amount": "2",
+            "amountPrefix": null,
+            "unit": null
+          },
+          {
+            "id": 104,
+            "ingredient": {
+              "id": 3,
+              "name": "Tomaten (gehackt)"
+            },
+            "text": null,
+            "amount": "800",
+            "amountPrefix": "ca.",
+            "unit": "g"
+          },
+          {
+            "id": 105,
+            "ingredient": {
+              "id": 7,
+              "name": "Tomatenmark"
+            },
+            "text": null,
+            "amount": "2",
+            "amountPrefix": null,
+            "unit": "EL"
+          },
+          {
+            "id": 106,
+            "ingredient": {
+              "id": 6,
+              "name": "Olivenöl"
+            },
+            "text": null,
+            "amount": "2",
+            "amountPrefix": null,
+            "unit": "EL"
+          },
+          {
+            "id": 107,
+            "ingredient": {
+              "id": 17,
+              "name": "Salz"
+            },
+            "text": "nach {Vegan} Geschmack",
+            "amount": null,
+            "amountPrefix": null,
+            "unit": null
+          }
+        ],
+        "steps": [
+          "Zwiebel und Knoblauch fein hacken.",
+          "Hackfleisch in Olivenöl krümelig anbraten.",
+          "Tomatenmark zugeben und kurz mitrösten.",
+          "Mit den Tomaten ablöschen und 30 Minuten köcheln lassen.",
+          "Mit {Vegan} Salz abschmecken."
+        ]
+      },
+      {
+        "id": 2,
+        "name": "Pasta",
+        "ingredients": [
+          {
+            "id": 108,
+            "ingredient": {
+              "id": 1,
+              "name": "Spaghetti"
+            },
+            "text": null,
+            "amount": "500",
+            "amountPrefix": null,
+            "unit": "g"
+          },
+          {
+            "id": 109,
+            "ingredient": {
+              "id": 8,
+              "name": "Parmesan"
+            },
+            "text": "zum Servieren",
+            "amount": null,
+            "amountPrefix": null,
+            "unit": null
+          }
+        ],
+        "steps": [
+          "Spaghetti nach Packungsangabe in Salzwasser kochen.",
+          "Mit der Soße und frisch geriebenem Parmesan servieren."
+        ]
+      }
+    ],
+    "rating": [
+      {
+        "user": 1,
+        "rating": 5
+      },
+      {
+        "user": 2,
+        "rating": 4
+      }
+    ]
+  },
+  {
+    "id": 2,
+    "owner": 1,
+    "viewers": [2, 3],
+    "editors": [],
+    "name": "Saftiger Schokokuchen",
+    "tags": ["Backen", "Dessert"],
+    "source": "https://example.com/schokokuchen",
+    "time": "25 min inkl. {Backzeit} 45 min",
+    "workMinutes": 25,
+    "overallMinutes": 70,
+    "sizeNumber": null,
+    "sizeText": "26 cm {Springform}",
+    "notes": [],
+    "mainImage": 2,
+    "images": [3, 4, 5, 6],
+    "sections": [
+      {
+        "id": 3,
+        "name": null,
+        "ingredients": [
+          {
+            "id": 201,
+            "ingredient": {
+              "id": 12,
+              "name": "Butter"
+            },
+            "text": null,
+            "amount": "200",
+            "amountPrefix": null,
+            "unit": "g"
+          },
+          {
+            "id": 202,
+            "ingredient": {
+              "id": 11,
+              "name": "Zucker"
+            },
+            "text": null,
+            "amount": "200",
+            "amountPrefix": null,
+            "unit": "g"
+          },
+          {
+            "id": 203,
+            "ingredient": {
+              "id": 13,
+              "name": "Eier"
+            },
+            "text": null,
+            "amount": "4",
+            "amountPrefix": null,
+            "unit": null
+          },
+          {
+            "id": 204,
+            "ingredient": {
+              "id": 10,
+              "name": "Mehl (Type 405)"
+            },
+            "text": null,
+            "amount": "250",
+            "amountPrefix": null,
+            "unit": "g"
+          },
+          {
+            "id": 205,
+            "ingredient": {
+              "id": 15,
+              "name": "Backpulver"
+            },
+            "text": null,
+            "amount": "1",
+            "amountPrefix": null,
+            "unit": "TL"
+          },
+          {
+            "id": 206,
+            "ingredient": {
+              "id": 16,
+              "name": "Zartbitterschokolade"
+            },
+            "text": null,
+            "amount": "200",
+            "amountPrefix": null,
+            "unit": "g"
+          },
+          {
+            "id": 207,
+            "ingredient": {
+              "id": 14,
+              "name": "Milch"
+            },
+            "text": null,
+            "amount": "100",
+            "amountPrefix": null,
+            "unit": "ml"
+          }
+        ],
+        "steps": [
+          "Backofen auf 180 °C Ober-/Unterhitze vorheizen.",
+          "Butter und Zucker schaumig rühren.",
+          "Eier einzeln unterrühren.",
+          "Schokolade schmelzen und unterrühren.",
+          "Mehl, Backpulver und Milch unterheben.",
+          "In die gefettete Springform geben und ca. 45 Minuten backen."
+        ]
+      }
+    ],
+    "rating": [
+      {
+        "user": 1,
+        "rating": 5
+      }
+    ]
+  },
+  {
+    "id": 3,
+    "owner": 2,
+    "viewers": [1],
+    "editors": [],
+    "name": "Pfannkuchen",
+    "tags": ["Vegetarisch", "Schnell"],
+    "source": null,
+    "time": "25 min",
+    "workMinutes": 10,
+    "overallMinutes": 25,
+    "sizeNumber": 4,
+    "sizeText": "{Portionen}",
+    "notes": ["Geht auch herzhaft mit Käse und Schinken."],
+    "mainImage": null,
+    "images": [],
+    "sections": [
+      {
+        "id": 4,
+        "name": null,
+        "ingredients": [
+          {
+            "id": 301,
+            "ingredient": {
+              "id": 10,
+              "name": "Mehl (Type 405)"
+            },
+            "text": null,
+            "amount": "250",
+            "amountPrefix": null,
+            "unit": "g"
+          },
+          {
+            "id": 302,
+            "ingredient": {
+              "id": 14,
+              "name": "Milch"
+            },
+            "text": null,
+            "amount": "500",
+            "amountPrefix": null,
+            "unit": "ml"
+          },
+          {
+            "id": 303,
+            "ingredient": {
+              "id": 13,
+              "name": "Eier"
+            },
+            "text": null,
+            "amount": "3",
+            "amountPrefix": null,
+            "unit": null
+          },
+          {
+            "id": 304,
+            "ingredient": {
+              "id": 17,
+              "name": "Salz"
+            },
+            "text": null,
+            "amount": "1",
+            "amountPrefix": null,
+            "unit": "Prise"
+          },
+          {
+            "id": 305,
+            "ingredient": {
+              "id": 12,
+              "name": "Butter"
+            },
+            "text": "zum Braten",
+            "amount": null,
+            "amountPrefix": null,
+            "unit": null
+          }
+        ],
+        "steps": [
+          "Mehl, Milch, Eier und Salz zu einem glatten Teig verrühren.",
+          "Den Teig 10 Minuten quellen lassen.",
+          "In etwas Butter portionsweise goldbraun ausbacken."
+        ]
+      }
+    ],
+    "rating": [
+      {
+        "user": 1,
+        "rating": 4
+      }
+    ]
+  },
+  {
+    "id": 4,
+    "owner": 1,
+    "viewers": [],
+    "editors": [],
+    "name": "Ofengemüse",
+    "tags": ["Vegetarisch", "Vegan"],
+    "source": null,
+    "time": null,
+    "workMinutes": 15,
+    "overallMinutes": 40,
+    "sizeNumber": 2,
+    "sizeText": "{Portionen}",
+    "notes": ["100 % pflanzlich {Vegan}"],
+    "mainImage": null,
+    "images": [],
+    "sections": [
+      {
+        "id": 5,
+        "name": null,
+        "ingredients": [
+          {
+            "id": 401,
+            "ingredient": {
+              "id": 18,
+              "name": "Kartoffeln"
+            },
+            "text": null,
+            "amount": "600",
+            "amountPrefix": null,
+            "unit": "g"
+          },
+          {
+            "id": 402,
+            "ingredient": {
+              "id": 19,
+              "name": "Paprika"
+            },
+            "text": null,
+            "amount": "2",
+            "amountPrefix": null,
+            "unit": null
+          },
+          {
+            "id": 403,
+            "ingredient": {
+              "id": 6,
+              "name": "Olivenöl"
+            },
+            "text": "zum Beträufeln",
+            "amount": null,
+            "amountPrefix": null,
+            "unit": null
+          },
+          {
+            "id": 404,
+            "ingredient": {
+              "id": 17,
+              "name": "Salz"
+            },
+            "text": "nach Geschmack",
+            "amount": null,
+            "amountPrefix": null,
+            "unit": null
+          }
+        ],
+        "steps": [
+          "Gemüse in mundgerechte Stücke schneiden.",
+          "Mit Öl und Salz mischen, auf ein Blech geben.",
+          "Bei 200 °C ca. 30 Minuten rösten."
+        ]
+      }
+    ],
+    "rating": []
+  },
+  {
+    "id": 5,
+    "owner": 1,
+    "viewers": [],
+    "editors": [],
+    "name": "Griechischer Bauernsalat",
+    "tags": ["Salat", "Vegetarisch", "Schnell"],
+    "source": null,
+    "time": "20 min",
+    "workMinutes": 20,
+    "overallMinutes": 20,
+    "sizeNumber": 4,
+    "sizeText": "{Portionen}",
+    "notes": ["Am besten 10 Minuten ziehen lassen, bevor du ihn servierst."],
+    "mainImage": null,
+    "images": [],
+    "sections": [
+      {
+        "id": 6,
+        "name": null,
+        "ingredients": [
+          {
+            "id": 501,
+            "ingredient": {
+              "id": 20,
+              "name": "Tomaten"
+            },
+            "text": null,
+            "amount": "4",
+            "amountPrefix": null,
+            "unit": null
+          },
+          {
+            "id": 502,
+            "ingredient": {
+              "id": 21,
+              "name": "Salatgurke"
+            },
+            "text": null,
+            "amount": "1",
+            "amountPrefix": null,
+            "unit": null
+          },
+          {
+            "id": 503,
+            "ingredient": {
+              "id": 19,
+              "name": "Paprika"
+            },
+            "text": null,
+            "amount": "1",
+            "amountPrefix": null,
+            "unit": null
+          },
+          {
+            "id": 504,
+            "ingredient": {
+              "id": 22,
+              "name": "Rote Zwiebel"
+            },
+            "text": null,
+            "amount": "1",
+            "amountPrefix": null,
+            "unit": null
+          },
+          {
+            "id": 505,
+            "ingredient": {
+              "id": 23,
+              "name": "Feta"
+            },
+            "text": null,
+            "amount": "200",
+            "amountPrefix": null,
+            "unit": "g"
+          },
+          {
+            "id": 506,
+            "ingredient": {
+              "id": 24,
+              "name": "Oliven (schwarz)"
+            },
+            "text": null,
+            "amount": "100",
+            "amountPrefix": null,
+            "unit": "g"
+          },
+          {
+            "id": 507,
+            "ingredient": {
+              "id": 6,
+              "name": "Olivenöl"
+            },
+            "text": null,
+            "amount": "4",
+            "amountPrefix": null,
+            "unit": "EL"
+          },
+          {
+            "id": 508,
+            "ingredient": {
+              "id": 25,
+              "name": "Oregano"
+            },
+            "text": "getrocknet",
+            "amount": "1",
+            "amountPrefix": null,
+            "unit": "TL"
+          },
+          {
+            "id": 509,
+            "ingredient": {
+              "id": 17,
+              "name": "Salz"
+            },
+            "text": "nach Geschmack",
+            "amount": null,
+            "amountPrefix": null,
+            "unit": null
+          }
+        ],
+        "steps": [
+          "Tomaten, Gurke und Paprika in mundgerechte Stücke schneiden.",
+          "Zwiebel in feine Ringe schneiden.",
+          "Alles mit den Oliven in eine Schüssel geben.",
+          "Mit Olivenöl, Oregano und Salz mischen.",
+          "Feta in Würfeln darüber verteilen."
+        ]
+      }
+    ],
+    "rating": [
+      {
+        "user": 1,
+        "rating": 5
+      },
+      {
+        "user": 3,
+        "rating": 4
+      }
+    ]
+  },
+  {
+    "id": 6,
+    "owner": 1,
+    "viewers": [2],
+    "editors": [],
+    "name": "Kürbissuppe",
+    "tags": ["Suppe", "Vegetarisch", "Vegan"],
+    "source": null,
+    "time": "15 min + {Kochzeit} 25 min",
+    "workMinutes": 15,
+    "overallMinutes": 40,
+    "sizeNumber": 4,
+    "sizeText": "{Portionen}",
+    "notes": ["Mit einem Klecks Kokosmilch und gerösteten Kürbiskernen anrichten."],
+    "mainImage": null,
+    "images": [],
+    "sections": [
+      {
+        "id": 7,
+        "name": null,
+        "ingredients": [
+          {
+            "id": 601,
+            "ingredient": {
+              "id": 26,
+              "name": "Hokkaido-Kürbis"
+            },
+            "text": null,
+            "amount": "1",
+            "amountPrefix": "ca.",
+            "unit": null
+          },
+          {
+            "id": 602,
+            "ingredient": {
+              "id": 27,
+              "name": "Karotte"
+            },
+            "text": null,
+            "amount": "2",
+            "amountPrefix": null,
+            "unit": null
+          },
+          {
+            "id": 603,
+            "ingredient": {
+              "id": 4,
+              "name": "Zwiebel"
+            },
+            "text": null,
+            "amount": "1",
+            "amountPrefix": null,
+            "unit": null
+          },
+          {
+            "id": 604,
+            "ingredient": {
+              "id": 5,
+              "name": "Knoblauchzehe"
+            },
+            "text": null,
+            "amount": "2",
+            "amountPrefix": null,
+            "unit": null
+          },
+          {
+            "id": 605,
+            "ingredient": {
+              "id": 30,
+              "name": "Ingwer"
+            },
+            "text": "geschält",
+            "amount": "20",
+            "amountPrefix": null,
+            "unit": "g"
+          },
+          {
+            "id": 606,
+            "ingredient": {
+              "id": 28,
+              "name": "Gemüsebrühe"
+            },
+            "text": null,
+            "amount": "800",
+            "amountPrefix": null,
+            "unit": "ml"
+          },
+          {
+            "id": 607,
+            "ingredient": {
+              "id": 29,
+              "name": "Kokosmilch"
+            },
+            "text": null,
+            "amount": "200",
+            "amountPrefix": null,
+            "unit": "ml"
+          },
+          {
+            "id": 608,
+            "ingredient": {
+              "id": 6,
+              "name": "Olivenöl"
+            },
+            "text": null,
+            "amount": "2",
+            "amountPrefix": null,
+            "unit": "EL"
+          },
+          {
+            "id": 609,
+            "ingredient": {
+              "id": 17,
+              "name": "Salz"
+            },
+            "text": "nach Geschmack",
+            "amount": null,
+            "amountPrefix": null,
+            "unit": null
+          }
+        ],
+        "steps": [
+          "Kürbis halbieren, entkernen und in Würfel schneiden (Hokkaido mit Schale).",
+          "Karotte, Zwiebel, Knoblauch und Ingwer klein schneiden.",
+          "Alles in Olivenöl andünsten.",
+          "Mit Gemüsebrühe ablöschen und 25 Minuten köcheln lassen.",
+          "Kokosmilch zugeben und fein pürieren.",
+          "Mit Salz abschmecken."
+        ]
+      }
+    ],
+    "rating": [
+      {
+        "user": 1,
+        "rating": 5
+      },
+      {
+        "user": 2,
+        "rating": 5
+      }
+    ]
+  },
+  {
+    "id": 7,
+    "owner": 2,
+    "viewers": [1],
+    "editors": [],
+    "name": "Hähnchen-Curry mit Reis",
+    "tags": ["Hauptgericht", "Indisch"],
+    "source": null,
+    "time": "20 min + {Kochzeit} 20 min",
+    "workMinutes": 20,
+    "overallMinutes": 40,
+    "sizeNumber": 4,
+    "sizeText": "{Portionen}",
+    "notes": [],
+    "mainImage": null,
+    "images": [],
+    "sections": [
+      {
+        "id": 8,
+        "name": "Curry",
+        "ingredients": [
+          {
+            "id": 701,
+            "ingredient": {
+              "id": 31,
+              "name": "Hähnchenbrustfilet"
+            },
+            "text": null,
+            "amount": "600",
+            "amountPrefix": null,
+            "unit": "g"
+          },
+          {
+            "id": 702,
+            "ingredient": {
+              "id": 4,
+              "name": "Zwiebel"
+            },
+            "text": null,
+            "amount": "2",
+            "amountPrefix": null,
+            "unit": null
+          },
+          {
+            "id": 703,
+            "ingredient": {
+              "id": 5,
+              "name": "Knoblauchzehe"
+            },
+            "text": null,
+            "amount": "2",
+            "amountPrefix": null,
+            "unit": null
+          },
+          {
+            "id": 704,
+            "ingredient": {
+              "id": 30,
+              "name": "Ingwer"
+            },
+            "text": "geschält",
+            "amount": "20",
+            "amountPrefix": null,
+            "unit": "g"
+          },
+          {
+            "id": 705,
+            "ingredient": {
+              "id": 32,
+              "name": "Currypulver"
+            },
+            "text": null,
+            "amount": "2",
+            "amountPrefix": null,
+            "unit": "EL"
+          },
+          {
+            "id": 706,
+            "ingredient": {
+              "id": 3,
+              "name": "Tomaten (gehackt)"
+            },
+            "text": null,
+            "amount": "400",
+            "amountPrefix": null,
+            "unit": "g"
+          },
+          {
+            "id": 707,
+            "ingredient": {
+              "id": 29,
+              "name": "Kokosmilch"
+            },
+            "text": null,
+            "amount": "400",
+            "amountPrefix": null,
+            "unit": "ml"
+          },
+          {
+            "id": 708,
+            "ingredient": {
+              "id": 6,
+              "name": "Olivenöl"
+            },
+            "text": null,
+            "amount": "2",
+            "amountPrefix": null,
+            "unit": "EL"
+          },
+          {
+            "id": 709,
+            "ingredient": {
+              "id": 17,
+              "name": "Salz"
+            },
+            "text": "nach Geschmack",
+            "amount": null,
+            "amountPrefix": null,
+            "unit": null
+          }
+        ],
+        "steps": [
+          "Hähnchen in mundgerechte Stücke schneiden.",
+          "Zwiebel, Knoblauch und Ingwer fein hacken.",
+          "Hähnchen in Olivenöl rundum anbraten, dann herausnehmen.",
+          "Zwiebel, Knoblauch und Ingwer andünsten, Currypulver kurz mitrösten.",
+          "Mit Tomaten und Kokosmilch ablöschen, Hähnchen zurückgeben.",
+          "20 Minuten köcheln lassen und mit Salz abschmecken."
+        ]
+      },
+      {
+        "id": 9,
+        "name": "Reis",
+        "ingredients": [
+          {
+            "id": 710,
+            "ingredient": {
+              "id": 33,
+              "name": "Basmatireis"
+            },
+            "text": null,
+            "amount": "300",
+            "amountPrefix": null,
+            "unit": "g"
+          },
+          {
+            "id": 711,
+            "ingredient": {
+              "id": 17,
+              "name": "Salz"
+            },
+            "text": null,
+            "amount": "1",
+            "amountPrefix": null,
+            "unit": "TL"
+          }
+        ],
+        "steps": ["Reis gründlich kalt waschen.", "In der doppelten Menge Salzwasser nach Packungsangabe garen."]
+      }
+    ],
+    "rating": [
+      {
+        "user": 2,
+        "rating": 5
+      },
+      {
+        "user": 1,
+        "rating": 4
+      }
+    ]
+  },
+  {
+    "id": 8,
+    "owner": 1,
+    "viewers": [],
+    "editors": [3],
+    "name": "Guacamole",
+    "tags": ["Vorspeise", "Vegan", "Mexikanisch", "Schnell"],
+    "source": null,
+    "time": "15 min",
+    "workMinutes": 15,
+    "overallMinutes": 15,
+    "sizeNumber": 4,
+    "sizeText": "{Portionen}",
+    "notes": ["Den Kern in die fertige Guacamole legen — so bleibt sie länger grün."],
+    "mainImage": null,
+    "images": [],
+    "sections": [
+      {
+        "id": 10,
+        "name": null,
+        "ingredients": [
+          {
+            "id": 801,
+            "ingredient": {
+              "id": 34,
+              "name": "Avocado"
+            },
+            "text": "reif",
+            "amount": "3",
+            "amountPrefix": null,
+            "unit": null
+          },
+          {
+            "id": 802,
+            "ingredient": {
+              "id": 35,
+              "name": "Limette"
+            },
+            "text": null,
+            "amount": "1",
+            "amountPrefix": null,
+            "unit": null
+          },
+          {
+            "id": 803,
+            "ingredient": {
+              "id": 22,
+              "name": "Rote Zwiebel"
+            },
+            "text": "klein",
+            "amount": "1",
+            "amountPrefix": null,
+            "unit": null
+          },
+          {
+            "id": 804,
+            "ingredient": {
+              "id": 20,
+              "name": "Tomaten"
+            },
+            "text": null,
+            "amount": "1",
+            "amountPrefix": null,
+            "unit": null
+          },
+          {
+            "id": 805,
+            "ingredient": {
+              "id": 5,
+              "name": "Knoblauchzehe"
+            },
+            "text": null,
+            "amount": "1",
+            "amountPrefix": null,
+            "unit": null
+          },
+          {
+            "id": 806,
+            "ingredient": {
+              "id": 36,
+              "name": "Koriander"
+            },
+            "text": "frisch, gehackt",
+            "amount": "2",
+            "amountPrefix": null,
+            "unit": "EL"
+          },
+          {
+            "id": 807,
+            "ingredient": {
+              "id": 17,
+              "name": "Salz"
+            },
+            "text": "nach Geschmack",
+            "amount": null,
+            "amountPrefix": null,
+            "unit": null
+          }
+        ],
+        "steps": [
+          "Avocados halbieren, entkernen und das Fruchtfleisch in eine Schüssel geben.",
+          "Mit dem Saft der Limette grob zerdrücken.",
+          "Zwiebel, Tomate und Knoblauch fein würfeln und untermischen.",
+          "Koriander unterheben und mit Salz abschmecken."
+        ]
+      }
+    ],
+    "rating": [
+      {
+        "user": 1,
+        "rating": 4
+      }
+    ]
+  },
+  {
+    "id": 9,
+    "owner": 3,
+    "viewers": [1],
+    "editors": [],
+    "name": "American Pancakes",
+    "tags": ["Frühstück", "Backen", "Schnell"],
+    "source": "https://example.com/pancakes",
+    "time": "15 min",
+    "workMinutes": 15,
+    "overallMinutes": 25,
+    "sizeNumber": 12,
+    "sizeText": "{Stück}",
+    "notes": ["Der Teig gelingt am besten, wenn er vor dem Backen kurz ruht."],
+    "mainImage": null,
+    "images": [],
+    "sections": [
+      {
+        "id": 11,
+        "name": null,
+        "ingredients": [
+          {
+            "id": 901,
+            "ingredient": {
+              "id": 10,
+              "name": "Mehl (Type 405)"
+            },
+            "text": null,
+            "amount": "250",
+            "amountPrefix": null,
+            "unit": "g"
+          },
+          {
+            "id": 902,
+            "ingredient": {
+              "id": 11,
+              "name": "Zucker"
+            },
+            "text": null,
+            "amount": "2",
+            "amountPrefix": null,
+            "unit": "EL"
+          },
+          {
+            "id": 903,
+            "ingredient": {
+              "id": 15,
+              "name": "Backpulver"
+            },
+            "text": null,
+            "amount": "1",
+            "amountPrefix": null,
+            "unit": "Päckchen"
+          },
+          {
+            "id": 904,
+            "ingredient": {
+              "id": 17,
+              "name": "Salz"
+            },
+            "text": null,
+            "amount": "1",
+            "amountPrefix": null,
+            "unit": "Prise"
+          },
+          {
+            "id": 905,
+            "ingredient": {
+              "id": 13,
+              "name": "Eier"
+            },
+            "text": null,
+            "amount": "2",
+            "amountPrefix": null,
+            "unit": null
+          },
+          {
+            "id": 906,
+            "ingredient": {
+              "id": 14,
+              "name": "Milch"
+            },
+            "text": null,
+            "amount": "300",
+            "amountPrefix": null,
+            "unit": "ml"
+          },
+          {
+            "id": 907,
+            "ingredient": {
+              "id": 12,
+              "name": "Butter"
+            },
+            "text": "geschmolzen",
+            "amount": "30",
+            "amountPrefix": null,
+            "unit": "g"
+          },
+          {
+            "id": 908,
+            "ingredient": {
+              "id": 37,
+              "name": "Ahornsirup"
+            },
+            "text": "zum Servieren",
+            "amount": null,
+            "amountPrefix": null,
+            "unit": null
+          }
+        ],
+        "steps": [
+          "Mehl, Zucker, Backpulver und Salz mischen.",
+          "Eier, Milch und geschmolzene Butter zu einem glatten Teig verrühren.",
+          "Teig 10 Minuten ruhen lassen.",
+          "Portionsweise in einer Pfanne bei mittlerer Hitze goldbraun backen.",
+          "Mit Ahornsirup servieren."
+        ]
+      }
+    ],
+    "rating": [
+      {
+        "user": 3,
+        "rating": 5
+      },
+      {
+        "user": 1,
+        "rating": 5
+      }
+    ]
+  },
+  {
+    "id": 10,
+    "owner": 1,
+    "viewers": [],
+    "editors": [],
+    "name": "Caesar Salad",
+    "tags": ["Salat", "Hauptgericht"],
+    "source": null,
+    "time": "25 min",
+    "workMinutes": 25,
+    "overallMinutes": 25,
+    "sizeNumber": 2,
+    "sizeText": "{Portionen}",
+    "notes": [],
+    "mainImage": null,
+    "images": [],
+    "sections": [
+      {
+        "id": 12,
+        "name": "Salat",
+        "ingredients": [
+          {
+            "id": 1001,
+            "ingredient": {
+              "id": 38,
+              "name": "Römersalat"
+            },
+            "text": null,
+            "amount": "1",
+            "amountPrefix": null,
+            "unit": null
+          },
+          {
+            "id": 1002,
+            "ingredient": {
+              "id": 31,
+              "name": "Hähnchenbrustfilet"
+            },
+            "text": null,
+            "amount": "300",
+            "amountPrefix": null,
+            "unit": "g"
+          },
+          {
+            "id": 1003,
+            "ingredient": {
+              "id": 39,
+              "name": "Croutons"
+            },
+            "text": null,
+            "amount": "50",
+            "amountPrefix": null,
+            "unit": "g"
+          },
+          {
+            "id": 1004,
+            "ingredient": {
+              "id": 8,
+              "name": "Parmesan"
+            },
+            "text": "gehobelt",
+            "amount": "30",
+            "amountPrefix": null,
+            "unit": "g"
+          }
+        ],
+        "steps": [
+          "Hähnchen salzen und in der Pfanne goldbraun braten, dann in Streifen schneiden.",
+          "Salat waschen und in mundgerechte Stücke zupfen.",
+          "Mit Croutons, Hähnchen und gehobeltem Parmesan anrichten."
+        ]
+      },
+      {
+        "id": 13,
+        "name": "Dressing",
+        "ingredients": [
+          {
+            "id": 1005,
+            "ingredient": {
+              "id": 40,
+              "name": "Mayonnaise"
+            },
+            "text": null,
+            "amount": "3",
+            "amountPrefix": null,
+            "unit": "EL"
+          },
+          {
+            "id": 1006,
+            "ingredient": {
+              "id": 5,
+              "name": "Knoblauchzehe"
+            },
+            "text": null,
+            "amount": "1",
+            "amountPrefix": null,
+            "unit": null
+          },
+          {
+            "id": 1007,
+            "ingredient": {
+              "id": 41,
+              "name": "Zitrone"
+            },
+            "text": "Saft einer halben Zitrone",
+            "amount": null,
+            "amountPrefix": null,
+            "unit": null
+          },
+          {
+            "id": 1008,
+            "ingredient": {
+              "id": 42,
+              "name": "Senf"
+            },
+            "text": null,
+            "amount": "1",
+            "amountPrefix": null,
+            "unit": "TL"
+          },
+          {
+            "id": 1009,
+            "ingredient": {
+              "id": 8,
+              "name": "Parmesan"
+            },
+            "text": "gerieben",
+            "amount": "20",
+            "amountPrefix": null,
+            "unit": "g"
+          },
+          {
+            "id": 1010,
+            "ingredient": {
+              "id": 6,
+              "name": "Olivenöl"
+            },
+            "text": null,
+            "amount": "2",
+            "amountPrefix": null,
+            "unit": "EL"
+          }
+        ],
+        "steps": [
+          "Knoblauch fein reiben.",
+          "Alle Zutaten zu einem cremigen Dressing verrühren.",
+          "Vor dem Servieren über den Salat geben und vermengen."
+        ]
+      }
+    ],
+    "rating": [
+      {
+        "user": 1,
+        "rating": 5
+      }
+    ]
+  },
+  {
+    "id": 11,
+    "owner": 2,
+    "viewers": [],
+    "editors": [1],
+    "name": "Rindergulasch",
+    "tags": ["Hauptgericht"],
+    "source": "Familienrezept",
+    "time": "30 min + {Kochzeit} 120 min",
+    "workMinutes": 30,
+    "overallMinutes": 150,
+    "sizeNumber": 6,
+    "sizeText": "{Portionen}",
+    "notes": [
+      "Je länger das Gulasch schmort, desto zarter wird das Fleisch.",
+      "Schmeckt aufgewärmt am nächsten Tag noch besser."
+    ],
+    "mainImage": null,
+    "images": [],
+    "sections": [
+      {
+        "id": 14,
+        "name": null,
+        "ingredients": [
+          {
+            "id": 1101,
+            "ingredient": {
+              "id": 43,
+              "name": "Rindfleisch (Gulasch)"
+            },
+            "text": null,
+            "amount": "1",
+            "amountPrefix": null,
+            "unit": "kg"
+          },
+          {
+            "id": 1102,
+            "ingredient": {
+              "id": 4,
+              "name": "Zwiebel"
+            },
+            "text": null,
+            "amount": "4",
+            "amountPrefix": null,
+            "unit": null
+          },
+          {
+            "id": 1103,
+            "ingredient": {
+              "id": 5,
+              "name": "Knoblauchzehe"
+            },
+            "text": null,
+            "amount": "2",
+            "amountPrefix": null,
+            "unit": null
+          },
+          {
+            "id": 1104,
+            "ingredient": {
+              "id": 19,
+              "name": "Paprika"
+            },
+            "text": null,
+            "amount": "2",
+            "amountPrefix": null,
+            "unit": null
+          },
+          {
+            "id": 1105,
+            "ingredient": {
+              "id": 44,
+              "name": "Paprikapulver (edelsüß)"
+            },
+            "text": null,
+            "amount": "2",
+            "amountPrefix": null,
+            "unit": "EL"
+          },
+          {
+            "id": 1106,
+            "ingredient": {
+              "id": 7,
+              "name": "Tomatenmark"
+            },
+            "text": null,
+            "amount": "2",
+            "amountPrefix": null,
+            "unit": "EL"
+          },
+          {
+            "id": 1107,
+            "ingredient": {
+              "id": 45,
+              "name": "Rinderbrühe"
+            },
+            "text": null,
+            "amount": "500",
+            "amountPrefix": null,
+            "unit": "ml"
+          },
+          {
+            "id": 1108,
+            "ingredient": {
+              "id": 6,
+              "name": "Olivenöl"
+            },
+            "text": null,
+            "amount": "3",
+            "amountPrefix": null,
+            "unit": "EL"
+          },
+          {
+            "id": 1109,
+            "ingredient": {
+              "id": 17,
+              "name": "Salz"
+            },
+            "text": "nach Geschmack",
+            "amount": null,
+            "amountPrefix": null,
+            "unit": null
+          }
+        ],
+        "steps": [
+          "Fleisch trocken tupfen und in Würfel schneiden.",
+          "Im heißen Öl portionsweise scharf anbraten, dann herausnehmen.",
+          "Zwiebeln und Knoblauch im Bratfett goldbraun anschwitzen.",
+          "Tomatenmark und Paprikapulver kurz mitrösten.",
+          "Fleisch zurückgeben und mit Rinderbrühe ablöschen.",
+          "Zugedeckt ca. 2 Stunden schmoren, Paprika in der letzten halben Stunde zugeben.",
+          "Mit Salz abschmecken."
+        ]
+      }
+    ],
+    "rating": [
+      {
+        "user": 2,
+        "rating": 5
+      },
+      {
+        "user": 1,
+        "rating": 4
+      }
+    ]
+  },
+  {
+    "id": 12,
+    "owner": 1,
+    "viewers": [],
+    "editors": [],
+    "name": "Cremige Tomatensuppe",
+    "tags": ["Suppe", "Vegetarisch", "Schnell"],
+    "source": null,
+    "time": "10 min + {Kochzeit} 20 min",
+    "workMinutes": 10,
+    "overallMinutes": 30,
+    "sizeNumber": 4,
+    "sizeText": "{Portionen}",
+    "notes": ["Mit frischem Basilikum und einem Schuss Olivenöl servieren."],
+    "mainImage": null,
+    "images": [],
+    "sections": [
+      {
+        "id": 15,
+        "name": null,
+        "ingredients": [
+          {
+            "id": 1201,
+            "ingredient": {
+              "id": 3,
+              "name": "Tomaten (gehackt)"
+            },
+            "text": null,
+            "amount": "800",
+            "amountPrefix": null,
+            "unit": "g"
+          },
+          {
+            "id": 1202,
+            "ingredient": {
+              "id": 4,
+              "name": "Zwiebel"
+            },
+            "text": null,
+            "amount": "1",
+            "amountPrefix": null,
+            "unit": null
+          },
+          {
+            "id": 1203,
+            "ingredient": {
+              "id": 5,
+              "name": "Knoblauchzehe"
+            },
+            "text": null,
+            "amount": "2",
+            "amountPrefix": null,
+            "unit": null
+          },
+          {
+            "id": 1204,
+            "ingredient": {
+              "id": 28,
+              "name": "Gemüsebrühe"
+            },
+            "text": null,
+            "amount": "400",
+            "amountPrefix": null,
+            "unit": "ml"
+          },
+          {
+            "id": 1205,
+            "ingredient": {
+              "id": 46,
+              "name": "Sahne"
+            },
+            "text": null,
+            "amount": "100",
+            "amountPrefix": null,
+            "unit": "ml"
+          },
+          {
+            "id": 1206,
+            "ingredient": {
+              "id": 7,
+              "name": "Tomatenmark"
+            },
+            "text": null,
+            "amount": "1",
+            "amountPrefix": null,
+            "unit": "EL"
+          },
+          {
+            "id": 1207,
+            "ingredient": {
+              "id": 6,
+              "name": "Olivenöl"
+            },
+            "text": null,
+            "amount": "2",
+            "amountPrefix": null,
+            "unit": "EL"
+          },
+          {
+            "id": 1208,
+            "ingredient": {
+              "id": 11,
+              "name": "Zucker"
+            },
+            "text": null,
+            "amount": "1",
+            "amountPrefix": null,
+            "unit": "Prise"
+          },
+          {
+            "id": 1209,
+            "ingredient": {
+              "id": 9,
+              "name": "Basilikum"
+            },
+            "text": "frisch",
+            "amount": null,
+            "amountPrefix": null,
+            "unit": null
+          },
+          {
+            "id": 1210,
+            "ingredient": {
+              "id": 17,
+              "name": "Salz"
+            },
+            "text": "nach Geschmack",
+            "amount": null,
+            "amountPrefix": null,
+            "unit": null
+          }
+        ],
+        "steps": [
+          "Zwiebel und Knoblauch fein würfeln und in Olivenöl glasig dünsten.",
+          "Tomatenmark kurz mitrösten.",
+          "Tomaten und Gemüsebrühe zugeben und 20 Minuten köcheln lassen.",
+          "Suppe fein pürieren.",
+          "Sahne unterrühren und mit Zucker, Salz und Basilikum abschmecken."
+        ]
+      }
+    ],
+    "rating": [
+      {
+        "user": 1,
+        "rating": 4
+      },
+      {
+        "user": 2,
+        "rating": 4
+      }
+    ]
+  },
+  {
+    "id": 13,
+    "owner": 1,
+    "viewers": [2, 3],
+    "editors": [],
+    "name": "Gedeckter Apfelkuchen",
+    "tags": ["Backen", "Dessert"],
+    "source": "https://example.com/apfelkuchen",
+    "time": "40 min + {Backzeit} 50 min",
+    "workMinutes": 40,
+    "overallMinutes": 90,
+    "sizeNumber": null,
+    "sizeText": "26 cm {Springform}",
+    "notes": ["Vor dem Anschneiden vollständig auskühlen lassen."],
+    "mainImage": null,
+    "images": [],
+    "sections": [
+      {
+        "id": 16,
+        "name": "Mürbeteig",
+        "ingredients": [
+          {
+            "id": 1301,
+            "ingredient": {
+              "id": 10,
+              "name": "Mehl (Type 405)"
+            },
+            "text": null,
+            "amount": "300",
+            "amountPrefix": null,
+            "unit": "g"
+          },
+          {
+            "id": 1302,
+            "ingredient": {
+              "id": 12,
+              "name": "Butter"
+            },
+            "text": "kalt",
+            "amount": "150",
+            "amountPrefix": null,
+            "unit": "g"
+          },
+          {
+            "id": 1303,
+            "ingredient": {
+              "id": 11,
+              "name": "Zucker"
+            },
+            "text": null,
+            "amount": "120",
+            "amountPrefix": null,
+            "unit": "g"
+          },
+          {
+            "id": 1304,
+            "ingredient": {
+              "id": 13,
+              "name": "Eier"
+            },
+            "text": null,
+            "amount": "1",
+            "amountPrefix": null,
+            "unit": null
+          },
+          {
+            "id": 1305,
+            "ingredient": {
+              "id": 17,
+              "name": "Salz"
+            },
+            "text": null,
+            "amount": "1",
+            "amountPrefix": null,
+            "unit": "Prise"
+          }
+        ],
+        "steps": [
+          "Mehl, Zucker und Salz mischen.",
+          "Kalte Butter in Stücken und das Ei zugeben.",
+          "Zügig zu einem glatten Teig verkneten.",
+          "In Folie gewickelt 30 Minuten kalt stellen."
+        ]
+      },
+      {
+        "id": 17,
+        "name": "Füllung",
+        "ingredients": [
+          {
+            "id": 1306,
+            "ingredient": {
+              "id": 47,
+              "name": "Apfel"
+            },
+            "text": null,
+            "amount": "1",
+            "amountPrefix": null,
+            "unit": "kg"
+          },
+          {
+            "id": 1307,
+            "ingredient": {
+              "id": 11,
+              "name": "Zucker"
+            },
+            "text": null,
+            "amount": "2",
+            "amountPrefix": null,
+            "unit": "EL"
+          },
+          {
+            "id": 1308,
+            "ingredient": {
+              "id": 48,
+              "name": "Zimt"
+            },
+            "text": null,
+            "amount": "1",
+            "amountPrefix": null,
+            "unit": "TL"
+          },
+          {
+            "id": 1309,
+            "ingredient": {
+              "id": 41,
+              "name": "Zitrone"
+            },
+            "text": "Saft einer halben Zitrone",
+            "amount": null,
+            "amountPrefix": null,
+            "unit": null
+          }
+        ],
+        "steps": [
+          "Äpfel schälen, entkernen und in Spalten schneiden.",
+          "Mit Zucker, Zimt und Zitronensaft mischen.",
+          "Zwei Drittel des Teigs in die Form drücken und einen Rand hochziehen.",
+          "Apfelfüllung einfüllen.",
+          "Restlichen Teig ausrollen, als Deckel auflegen und andrücken.",
+          "Bei 180 °C ca. 50 Minuten goldbraun backen."
+        ]
+      }
+    ],
+    "rating": [
+      {
+        "user": 1,
+        "rating": 5
+      },
+      {
+        "user": 2,
+        "rating": 5
+      },
+      {
+        "user": 3,
+        "rating": 4
+      }
+    ]
+  },
+  {
+    "id": 14,
+    "owner": 3,
+    "viewers": [1],
+    "editors": [2],
+    "name": "Asiatische Gemüsepfanne mit Reis",
+    "tags": ["Vegan", "Asiatisch", "Schnell"],
+    "source": null,
+    "time": "20 min",
+    "workMinutes": 20,
+    "overallMinutes": 20,
+    "sizeNumber": 3,
+    "sizeText": "{Portionen}",
+    "notes": ["Das Gemüse soll knackig bleiben — nur kurz und heiß braten."],
+    "mainImage": null,
+    "images": [],
+    "sections": [
+      {
+        "id": 18,
+        "name": null,
+        "ingredients": [
+          {
+            "id": 1401,
+            "ingredient": {
+              "id": 33,
+              "name": "Basmatireis"
+            },
+            "text": null,
+            "amount": "250",
+            "amountPrefix": null,
+            "unit": "g"
+          },
+          {
+            "id": 1402,
+            "ingredient": {
+              "id": 49,
+              "name": "Brokkoli"
+            },
+            "text": "klein",
+            "amount": "1",
+            "amountPrefix": null,
+            "unit": null
+          },
+          {
+            "id": 1403,
+            "ingredient": {
+              "id": 27,
+              "name": "Karotte"
+            },
+            "text": null,
+            "amount": "2",
+            "amountPrefix": null,
+            "unit": null
+          },
+          {
+            "id": 1404,
+            "ingredient": {
+              "id": 19,
+              "name": "Paprika"
+            },
+            "text": null,
+            "amount": "1",
+            "amountPrefix": null,
+            "unit": null
+          },
+          {
+            "id": 1405,
+            "ingredient": {
+              "id": 52,
+              "name": "Frühlingszwiebel"
+            },
+            "text": null,
+            "amount": "3",
+            "amountPrefix": null,
+            "unit": null
+          },
+          {
+            "id": 1406,
+            "ingredient": {
+              "id": 5,
+              "name": "Knoblauchzehe"
+            },
+            "text": null,
+            "amount": "2",
+            "amountPrefix": null,
+            "unit": null
+          },
+          {
+            "id": 1407,
+            "ingredient": {
+              "id": 30,
+              "name": "Ingwer"
+            },
+            "text": "geschält",
+            "amount": "20",
+            "amountPrefix": null,
+            "unit": "g"
+          },
+          {
+            "id": 1408,
+            "ingredient": {
+              "id": 50,
+              "name": "Sojasauce"
+            },
+            "text": null,
+            "amount": "4",
+            "amountPrefix": null,
+            "unit": "EL"
+          },
+          {
+            "id": 1409,
+            "ingredient": {
+              "id": 51,
+              "name": "Sesamöl"
+            },
+            "text": null,
+            "amount": "2",
+            "amountPrefix": null,
+            "unit": "EL"
+          }
+        ],
+        "steps": [
+          "Reis nach Packungsangabe garen.",
+          "Brokkoli in Röschen teilen, Karotte und Paprika in Streifen schneiden.",
+          "Knoblauch und Ingwer fein hacken, Frühlingszwiebeln in Ringe schneiden.",
+          "Gemüse in heißem Sesamöl 5–6 Minuten knackig braten.",
+          "Knoblauch und Ingwer zugeben und kurz mitbraten.",
+          "Mit Sojasauce ablöschen und mit dem Reis servieren."
+        ]
+      }
+    ],
+    "rating": [
+      {
+        "user": 3,
+        "rating": 4
+      }
+    ]
+  }
+]

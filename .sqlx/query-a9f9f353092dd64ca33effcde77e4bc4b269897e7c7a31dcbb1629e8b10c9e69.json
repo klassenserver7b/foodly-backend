@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        UPDATE recipes SET\n            name = $2, source = $3, time_display = $4, work_minutes = $5, overall_minutes = $6,\n            size_number = $7, size_text = $8, notes = $9, main_image_id = $10, updated_at = now()\n        WHERE id = $1\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text",
+        "Text",
+        "Text",
+        "Int4",
+        "Int4",
+        "Int4",
+        "Text",
+        "TextArray",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "a9f9f353092dd64ca33effcde77e4bc4b269897e7c7a31dcbb1629e8b10c9e69"
+}

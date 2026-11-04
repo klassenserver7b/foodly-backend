@@ -4,3 +4,17 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+anyhow = { version = "1.0.103" }
+axum = { version = "0.8.9" }
+dotenvy = { version = "0.15.7" }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = { version = "1.0.150" }
+sqlx = { version = "0.9.0", features = ["postgres", "runtime-tokio", "uuid", "chrono", "macros"] }
+tokio = { version = "1.52.3", features = ["full"] }
+tower-http = { version = "0.7.0", features = ["cors", "trace"] }
+sha2 = { version = "0.11.0" }
+hex = { version = "0.4" }
+
+[dev-dependencies]
+http-body-util = { version = "0.1.3" }
+tower = { version = "0.5.3", features = ["util"] }

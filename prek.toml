@@ -9,3 +9,10 @@ hooks = [{ id = "trailing-whitespace" }, { id = "check-case-conflict" }, { id = 
 repo = "https://github.com/doublify/pre-commit-rust"
 rev = "v1.0"
 hooks = [{ id = "fmt" }, { id = "cargo-check" }, { id = "clippy" }]
+
+[[repos]]
+repo = "local"
+hooks = [
+    { id = "cargo-sqlx-prepare", name = "cargo sqlx prepare", language = "system", entry = "cargo sqlx prepare", pass_filenames = false, files = "\\.(rs)$", stages = ["pre-commit"] },
+    { id = "git-add-sqlx", name = "git add sqlx files", language = "system", entry = "git add .sqlx/*", pass_filenames = false, files = "\\.(rs)$", stages = ["pre-commit"] },
+]

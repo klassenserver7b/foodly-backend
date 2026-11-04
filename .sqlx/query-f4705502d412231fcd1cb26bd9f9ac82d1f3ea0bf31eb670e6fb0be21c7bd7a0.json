@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM user_category_recipes WHERE category_id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "f4705502d412231fcd1cb26bd9f9ac82d1f3ea0bf31eb670e6fb0be21c7bd7a0"
+}

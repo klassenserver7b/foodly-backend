@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO recipe_images (recipe_id, image_id, position) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8",
+        "Int4"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "a70e01d6c87fdffd6db6616e9f6e8b89cb43c0a6b3f1a250ae5fe79a99ea9f5a"
+}
