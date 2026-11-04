@@ -4,9 +4,10 @@ Guidance for any Agent when working in this repository.
 
 ## Git — committing & pushing
 
-**Never commit or push on your own.** 
-If you think it is time for a commit, generate a commit message and ask the user to do the commit.
-Never push on your own. The user decides for its own if he wants to push.
+**Never push on your own.** 
+If you think it is time for a commit, generate a commit message and do the commit.
+Keep the commit messages short and descriptive.
+Never push on your own. The user decides for its own if he wants to push. But you can give hints that you think it is time for a push.
 (This isn't about deploys — pushing `main` currently deploys
 nothing. The user just wants to decide when work lands on the remote.)
 
@@ -17,7 +18,7 @@ commits in this repo.
 
 Always use `cargo check` to validate your changes when you think they should compile.
 Use `cargo clippy` sometimes to stay close to rust guidelines.
-If you ask the user to commit check `prek` first to comply with pre commit guidelines
+If you ask the user to push check `prek` first to comply with pre commit / pre push guidelines.
 
 **[IMPORTANT]**
 If you changed API endpoints and their logic **start the server** and use test queries to check if they are working correctly.
@@ -38,7 +39,7 @@ Consult `resources/md` for further information
 ### Backend architecture — conventions
 
 - **Axum Framework**: Use `axum` for all HTTP and WebSocket routing. Route definitions and handlers should live in `src/api/`.
-- **Database**: We use PostgreSQL with `sqlx`. All database interactions should utilize the `PgPool` injected via Axum's state. Prefer compile-time checked macros (`query!`, `query_as!`) for safety.
+- **Database**: We use PostgreSQL with `diesel` and `diesel-async`. All database interactions should utilize the `PgPool` injected via Axum's state.
 - **Error Handling**: We use `anyhow` for robust error propagation. Since `anyhow::Error` does not implement `IntoResponse` directly, use a custom wrapper (e.g., `struct AppError(anyhow::Error)`) that implements `IntoResponse`. Never panic in a handler; always bubble up the error and let the global error handler map it to an HTTP response.
 - **State Management**: Use `axum::extract::State` to access shared resources like the DB pool and configuration.
 
@@ -52,9 +53,9 @@ Consult `resources/md` for further information
 
 - **Unit Tests**: Place unit tests in the same file as the module being tested, inside a `#[cfg(test)] mod tests { ... }` block. Focus on testing domain logic and service functions.
 - **Integration Tests**: Place integration tests in the `tests/` directory at the project root.
-- **API Testing**: For API routes, use `tower::ServiceExt` (e.g., `app.oneshot(request)`) to bypass the network stack and test handlers directly. For database-dependent tests, ensure a dedicated test database is spun up and seeded before the test runs (or use `sqlx` test macros).
+- **API Testing**: For API routes, use `tower::ServiceExt` (e.g., `app.oneshot(request)`) to bypass the network stack and test handlers directly. For database-dependent tests, ensure a dedicated test database is spun up and seeded before the test runs (or use the built-in test database harness in `tests/api_tests.rs`).
  
-If you are modifing code always evaluate if new tests are needed and wirte them if so.
+If you are modifing code always evaluate if new tests are needed and write them if so.
 
 ## Commands
 
