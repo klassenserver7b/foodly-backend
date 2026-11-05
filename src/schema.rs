@@ -178,6 +178,7 @@ diesel::table! {
 // Foreign-key relations used by DSL joins in the codebase.
 diesel::joinable!(recipe_ingredients -> sections (section_id));
 diesel::joinable!(recipe_ingredients -> ingredients (ingredient_id));
+diesel::joinable!(recipe_images -> images (image_id));
 
 diesel::allow_tables_to_appear_in_same_query!(
     users,
