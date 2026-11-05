@@ -297,8 +297,12 @@ pub(super) fn create_recipe_copy(original: Recipe) -> CreateRecipe {
         size_number: original.size_number,
         size_text: original.size_text,
         notes: original.notes,
-        main_image: original.main_image,
-        images: original.images,
+        main_image: original.main_image.map(|img| img.id as i32),
+        images: original
+            .images
+            .into_iter()
+            .map(|img| img.id as i32)
+            .collect(),
         sections: original
             .sections
             .into_iter()

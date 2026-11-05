@@ -17,6 +17,17 @@ pub struct IngredientRef {
     pub name: String,
 }
 
+/// A lightweight reference to an image, embedded in Recipe responses.
+///
+/// Provides the `hash` needed to construct the serve URL (`GET /images/{hash}`)
+/// plus the `name` for display. Write bodies keep sending bare image IDs.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ImageRef {
+    pub id: i64,
+    pub hash: String,
+    pub name: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RecipeIngredient {
@@ -65,9 +76,9 @@ pub struct Recipe {
     pub size_text: Option<String>,
     #[serde(default)]
     pub notes: Vec<String>,
-    pub main_image: Option<i32>,
+    pub main_image: Option<ImageRef>,
     #[serde(default)]
-    pub images: Vec<i32>,
+    pub images: Vec<ImageRef>,
     #[serde(default)]
     pub sections: Vec<Section>,
     #[serde(default)]
@@ -93,7 +104,7 @@ pub struct RecipePreview {
     pub overall_minutes: Option<i32>,
     pub size_number: Option<i32>,
     pub size_text: Option<String>,
-    pub main_image: Option<i32>,
+    pub main_image: Option<ImageRef>,
     pub created_at: Option<String>,
     pub updated_at: Option<String>,
 }

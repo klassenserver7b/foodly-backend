@@ -5,7 +5,7 @@
 mod helpers;
 
 use crate::models::recipe::{
-    CreateRecipe, Order, Recipe, RecipeAccessRights, RecipePreview, RecipeSearchQuery,
+    CreateRecipe, ImageRef, Order, Recipe, RecipeAccessRights, RecipePreview, RecipeSearchQuery,
     RecipeShareState,
 };
 use crate::{AppState, error::AppError};
@@ -19,9 +19,11 @@ use diesel::result::OptionalExtension;
 use diesel::sql_types::Bool;
 use diesel_async::{AsyncConnection, RunQueryDsl};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 use crate::schema::{
-    recipe_editors, recipe_images, recipe_tags, recipe_viewers, recipes, user_category_recipes,
+    images, recipe_editors, recipe_images, recipe_tags, recipe_viewers, recipes,
+    user_category_recipes,
 };
 
 /// Dynamically composed WHERE condition over `recipes` for the search query.
@@ -148,12 +150,27 @@ async fn get_recipe(
         .load(&mut conn)
         .await?;
 
-    let images: Vec<i64> = recipe_images::table
+    let main_image: Option<ImageRef> = match main_image_id {
+        Some(image_id) => images::table
+            .filter(images::id.eq(image_id))
+            .select((images::id, images::hash, images::name))
+            .first::<(i64, String, Option<String>)>(&mut conn)
+            .await
+            .optional()?
+            .map(|(id, hash, name)| ImageRef { id, hash, name }),
+        None => None,
+    };
+
+    let gallery_images: Vec<ImageRef> = recipe_images::table
+        .inner_join(images::table)
         .filter(recipe_images::recipe_id.eq(r_id))
         .order(recipe_images::position.asc())
-        .select(recipe_images::image_id)
+        .select((images::id, images::hash, images::name))
         .load(&mut conn)
-        .await?;
+        .await?
+        .into_iter()
+        .map(|(id, hash, name)| ImageRef { id, hash, name })
+        .collect();
 
     let sections = helpers::fetch_sections(r_id, &mut conn).await?;
 
@@ -172,8 +189,8 @@ async fn get_recipe(
         size_number,
         size_text,
         notes: notes.into_iter().flatten().collect(),
-        main_image: main_image_id.map(|id| id as i32),
-        images: images.into_iter().map(|v| v as i32).collect(),
+        main_image,
+        images: gallery_images,
         sections,
         created_at: Some(created_at.to_rfc3339()),
         updated_at: Some(updated_at.to_rfc3339()),
@@ -546,6 +563,22 @@ async fn fetch_recipes(
             .await?
     };
 
+    // Batch-load the main images for the page (join via recipes.main_image_id).
+    let main_image_ids: Vec<i64> = records.iter().filter_map(|r| r.10).collect();
+    let main_images: Vec<(i64, String, Option<String>)> = if main_image_ids.is_empty() {
+        vec![]
+    } else {
+        images::table
+            .filter(images::id.eq_any(&main_image_ids))
+            .select((images::id, images::hash, images::name))
+            .load(&mut conn)
+            .await?
+    };
+    let image_map: HashMap<i64, ImageRef> = main_images
+        .into_iter()
+        .map(|(id, hash, name)| (id, ImageRef { id, hash, name }))
+        .collect();
+
     let mut data = Vec::with_capacity(records.len());
     for rec in records {
         let (
@@ -594,7 +627,7 @@ async fn fetch_recipes(
             overall_minutes,
             size_number,
             size_text,
-            main_image: main_image_id.map(|id| id as i32),
+            main_image: main_image_id.and_then(|id| image_map.get(&id).cloned()),
             created_at: Some(created_at.to_rfc3339()),
             updated_at: Some(updated_at.to_rfc3339()),
         });
