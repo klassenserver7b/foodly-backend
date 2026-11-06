@@ -75,7 +75,7 @@ The current `auth_middleware` in `src/lib.rs` accepts **any** Bearer token and i
 ### Security Constraints
 - **SEC-001**: Passwords must be hashed with argon2id (default params: memory 19456 KiB, iterations 2, parallelism 1) before storage — never store plaintext
 - **SEC-002**: Refresh tokens must be stored as SHA-256 hashes in the `refresh_tokens.token_hash` column — never store the raw token
-- **SEC-003**: The JWT signing secret must come from an environment variable (`JWT_SECRET`), minimum 32 characters
+- **SEC-003**: The JWT signing secret must come from an environment variable (`JWT_SECRET`), minimum 32 characters, if ENV not present generate it randomly on first start (e.g. /dev/random)
 - **SEC-004**: Login failures must return a generic `invalid credentials` message — do not reveal whether the email exists
 - **SEC-005**: All auth endpoints must be served over HTTPS in production (deployment concern, not code)
 - **SEC-006**: Rate limiting must be configurable via ENV (`RATE_LIMIT_MODE=direct|proxy|disabled`); in `proxy` mode, only trust `X-Real-IP` / `X-Forwarded-For` from `TRUSTED_PROXIES`
