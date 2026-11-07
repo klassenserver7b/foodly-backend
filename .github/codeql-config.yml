@@ -1,0 +1,5 @@
+# Exclude test files from CodeQL analysis.
+# Tests intentionally embed hard-coded fixtures (passwords, salts, keys) that
+# trip the hard-coded-credential queries. Production code keeps full coverage.
+paths-ignore:
+  - 'tests/**'
