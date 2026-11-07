@@ -13,6 +13,9 @@ pub const TEST_JWT_SECRET: &str = "0123456789abcdef0123456789abcdef0123456789abc
 /// Test user password.
 pub const TEST_PASSWORD: &str = "hunter2";
 
+/// Seed password for mock users created by `cargo run --bin seed`.
+pub const SEED_PASSWORD: &str = "password123";
+
 /// A wrong JWT secret to prove verification fails on mismatch.
 pub const WRONG_JWT_SECRET: &str = "fedcba9876543210fedcba9876543210fedcba9876543210";
 

@@ -24,8 +24,8 @@ pub mod schema;
 pub mod secrets;
 pub mod services;
 
-/// Test-only secrets, excluded from CodeQL analysis via `paths-ignore`.
-#[cfg(test)]
+/// Test/seed secrets, excluded from CodeQL analysis via `paths-ignore`.
+/// Not gated on `cfg(test)` so `src/bin/seed.rs` can also use them.
 pub mod test_secrets;
 
 /// Rate-limit deployment topology.

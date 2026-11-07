@@ -9,6 +9,7 @@
 use foodly_backend::db;
 use foodly_backend::secrets::bootstrap_secrets;
 use foodly_backend::services::auth::hash_password;
+use foodly_backend::test_secrets::SEED_PASSWORD;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -21,7 +22,7 @@ async fn main() -> anyhow::Result<()> {
     let pool = db::init_pool().await?;
 
     // Hash the seed password with the current pepper
-    let hash = hash_password("password123")?;
+    let hash = hash_password(SEED_PASSWORD)?;
 
     // Read seed.sql and substitute the placeholder
     let seed_sql = std::fs::read_to_string("resources/mock/seed.sql")?;
@@ -34,6 +35,6 @@ async fn main() -> anyhow::Result<()> {
         conn.batch_execute(&seed_sql).await?;
     }
 
-    println!("Seeded users with password `password123`");
+    println!("Seeded users with password `{SEED_PASSWORD}`");
     Ok(())
 }
