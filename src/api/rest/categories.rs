@@ -34,10 +34,10 @@ pub fn router() -> Router<AppState> {
 
 async fn list_categories(
     State(state): State<AppState>,
-    Extension(user_id): Extension<i32>,
+    Extension(user_id): Extension<i64>,
     Query(pagination): Query<PaginationQuery>,
 ) -> Result<Json<PaginatedResponse<Category>>, AppError> {
-    let u_id = user_id as i64;
+    let u_id = user_id;
     let limit = pagination.limit.unwrap_or(20).min(100);
     let page = pagination.page.unwrap_or(1).max(1);
     let offset = (page - 1) * limit;
@@ -99,7 +99,7 @@ async fn list_categories(
 
 async fn create_category(
     State(state): State<AppState>,
-    Extension(user_id): Extension<i32>,
+    Extension(user_id): Extension<i64>,
     Json(payload): Json<CreateCategory>,
 ) -> Result<Json<Category>, AppError> {
     if payload.name.is_empty() {
@@ -109,7 +109,7 @@ async fn create_category(
         return Err(AppError::Unprocessable("Color cannot be empty".into()));
     }
 
-    let u_id = user_id as i64;
+    let u_id = user_id;
     let mut conn = state.pool.get().await?;
 
     // Get current max sort_order for this user
@@ -140,7 +140,7 @@ async fn create_category(
 
 async fn update_category(
     State(state): State<AppState>,
-    Extension(user_id): Extension<i32>,
+    Extension(user_id): Extension<i64>,
     Path(id): Path<i32>,
     Json(payload): Json<CreateCategory>,
 ) -> Result<Json<Category>, AppError> {
@@ -152,7 +152,7 @@ async fn update_category(
     }
 
     let c_id = id as i64;
-    let u_id = user_id as i64;
+    let u_id = user_id;
     let mut conn = state.pool.get().await?;
 
     let res = diesel::update(user_categories::table)
@@ -177,11 +177,11 @@ async fn update_category(
 
 async fn delete_category(
     State(state): State<AppState>,
-    Extension(user_id): Extension<i32>,
+    Extension(user_id): Extension<i64>,
     Path(id): Path<i32>,
 ) -> Result<axum::http::StatusCode, AppError> {
     let c_id = id as i64;
-    let u_id = user_id as i64;
+    let u_id = user_id;
     let mut conn = state.pool.get().await?;
 
     let res = diesel::delete(user_categories::table)
@@ -199,12 +199,12 @@ async fn delete_category(
 
 async fn update_category_recipes(
     State(state): State<AppState>,
-    Extension(user_id): Extension<i32>,
+    Extension(user_id): Extension<i64>,
     Path(id): Path<i32>,
     Json(payload): Json<UpdateCategoryRecipes>,
 ) -> Result<Json<Category>, AppError> {
     let c_id = id as i64;
-    let u_id = user_id as i64;
+    let u_id = user_id;
     let mut conn = state.pool.get().await?;
 
     // Verify category belongs to user
@@ -271,10 +271,10 @@ async fn update_category_recipes(
 
 async fn reorder_categories(
     State(state): State<AppState>,
-    Extension(user_id): Extension<i32>,
+    Extension(user_id): Extension<i64>,
     Json(payload): Json<ReorderCategories>,
 ) -> Result<Json<CategoryOrderResponse>, AppError> {
-    let u_id = user_id as i64;
+    let u_id = user_id;
     let mut conn = state.pool.get().await?;
     let mut data = Vec::with_capacity(payload.category_ids.len());
 

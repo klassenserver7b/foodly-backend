@@ -30,6 +30,7 @@ diesel::table! {
         id -> BigInt,
         hash -> Text,
         name -> Nullable<Text>,
+        owner_id -> Nullable<BigInt>,
     }
 }
 

@@ -95,11 +95,11 @@ macro_rules! recipe_cols {
 
 async fn get_recipe(
     State(state): State<AppState>,
-    Extension(user_id): Extension<i32>,
+    Extension(user_id): Extension<i64>,
     Path(id): Path<i32>,
 ) -> Result<Json<Recipe>, AppError> {
     let r_id = id as i64;
-    let u_id = user_id as i64;
+    let u_id = user_id;
 
     let mut conn = state.pool.get().await?;
 
@@ -200,14 +200,14 @@ async fn get_recipe(
 
 async fn create_recipe(
     State(state): State<AppState>,
-    Extension(user_id): Extension<i32>,
+    Extension(user_id): Extension<i64>,
     Json(payload): Json<CreateRecipe>,
 ) -> Result<Json<Recipe>, AppError> {
     if payload.name.is_empty() {
         return Err(AppError::Unprocessable("Name cannot be empty".into()));
     }
 
-    let u_id = user_id as i64;
+    let u_id = user_id;
     let mut conn = state.pool.get().await?;
 
     let rec_id = conn
@@ -245,7 +245,7 @@ async fn create_recipe(
 
 async fn update_recipe(
     State(state): State<AppState>,
-    Extension(user_id): Extension<i32>,
+    Extension(user_id): Extension<i64>,
     Path(id): Path<i32>,
     Json(payload): Json<CreateRecipe>,
 ) -> Result<Json<Recipe>, AppError> {
@@ -254,7 +254,7 @@ async fn update_recipe(
     }
 
     let r_id = id as i64;
-    let u_id = user_id as i64;
+    let u_id = user_id;
 
     let mut conn = state.pool.get().await?;
 
@@ -273,11 +273,11 @@ async fn update_recipe(
 
 async fn delete_recipe(
     State(state): State<AppState>,
-    Extension(user_id): Extension<i32>,
+    Extension(user_id): Extension<i64>,
     Path(id): Path<i32>,
 ) -> Result<axum::http::StatusCode, AppError> {
     let r_id = id as i64;
-    let u_id = user_id as i64;
+    let u_id = user_id;
 
     let mut conn = state.pool.get().await?;
 
@@ -307,7 +307,7 @@ async fn delete_recipe(
 
 async fn copy_recipe(
     State(state): State<AppState>,
-    Extension(user_id): Extension<i32>,
+    Extension(user_id): Extension<i64>,
     Path(id): Path<i32>,
 ) -> Result<Json<Recipe>, AppError> {
     let original = get_recipe(State(state.clone()), Extension(user_id), Path(id))
@@ -343,11 +343,11 @@ fn nonempty<T>(opt: &Option<Vec<T>>) -> Option<&Vec<T>> {
 
 async fn fetch_recipes(
     state: &AppState,
-    user_id: i32,
+    user_id: i64,
     pagination: PaginationQuery,
     query: RecipeSearchQuery,
 ) -> Result<PaginatedResponse<RecipePreview>, AppError> {
-    let u_id = user_id as i64;
+    let u_id = user_id;
     let limit = pagination.limit.unwrap_or(20).min(100);
     let page = pagination.page.unwrap_or(1).max(1);
     let offset = (page - 1) * limit;
@@ -644,7 +644,7 @@ async fn fetch_recipes(
 
 async fn list_recipes(
     State(state): State<AppState>,
-    Extension(user_id): Extension<i32>,
+    Extension(user_id): Extension<i64>,
     Query(pagination): Query<PaginationQuery>,
 ) -> Result<Json<PaginatedResponse<RecipePreview>>, AppError> {
     let search_query = RecipeSearchQuery::default();
@@ -654,7 +654,7 @@ async fn list_recipes(
 
 async fn search_recipes(
     State(state): State<AppState>,
-    Extension(user_id): Extension<i32>,
+    Extension(user_id): Extension<i64>,
     Query(pagination): Query<PaginationQuery>,
     query: Option<Json<RecipeSearchQuery>>,
 ) -> Result<Json<PaginatedResponse<RecipePreview>>, AppError> {

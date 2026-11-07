@@ -22,6 +22,7 @@ pub enum AppError {
     Unprocessable(String),
     Conflict(String),
     Internal(anyhow::Error),
+    Unauthorized(String),
 }
 
 impl IntoResponse for AppError {
@@ -44,6 +45,9 @@ impl IntoResponse for AppError {
                     "INTERNAL_SERVER_ERROR",
                     "An internal server error occurred".to_string(),
                 )
+            }
+            AppError::Unauthorized(ref msg) => {
+                (StatusCode::UNAUTHORIZED, "UNAUTHORIZED", msg.clone())
             }
         };
 

@@ -9,7 +9,7 @@ All technical decisions have been locked in:
 1. **Database Selection**: **PostgreSQL**
 2. **Web Framework**: **Axum** 
 3. **Sync Strategy**: **Custom Backlog processing**. The client provides an offline change backlog. The server processes it sequentially and drops any incoming conflicting changes.
-4. **Authentication**: **JWT + REST Login Route**. An initial REST endpoint (`/login`) handles authentication and issues a JWT.
+4. **Authentication**: **JWT + REST Login Route**. An initial REST endpoint (`/api/v1/auth/login`) handles authentication and issues a JWT.
 5. **Database Library**: **diesel + diesel-async** (type-safe query builder, async on tokio)
 
 ## Proposed Core Libraries

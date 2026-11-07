@@ -35,12 +35,12 @@ pub fn router() -> Router<AppState> {
 
 async fn get_me(
     State(state): State<AppState>,
-    Extension(user_id): Extension<i32>,
+    Extension(user_id): Extension<i64>,
 ) -> Result<Json<User>, AppError> {
     let mut conn = state.pool.get().await?;
 
     let user = users::table
-        .filter(users::id.eq(user_id as i64))
+        .filter(users::id.eq(user_id))
         .select((users::id, users::name, users::email, users::profile_picture))
         .first::<(i64, String, String, Option<String>)>(&mut conn)
         .await
@@ -57,7 +57,7 @@ async fn get_me(
 
 async fn patch_me(
     State(state): State<AppState>,
-    Extension(user_id): Extension<i32>,
+    Extension(user_id): Extension<i64>,
     Json(payload): Json<UserUpdatePayload>,
 ) -> Result<Json<User>, AppError> {
     if let Some(name) = &payload.name
@@ -76,7 +76,7 @@ async fn patch_me(
 
     // Read current values for the COALESCE-like partial update
     let (current_name, current_email): (String, String) = users::table
-        .filter(users::id.eq(user_id as i64))
+        .filter(users::id.eq(user_id))
         .select((users::name, users::email))
         .first(&mut conn)
         .await?;
@@ -85,7 +85,7 @@ async fn patch_me(
     let new_email = payload.email.unwrap_or(current_email);
 
     let user = diesel::update(users::table)
-        .filter(users::id.eq(user_id as i64))
+        .filter(users::id.eq(user_id))
         .set((users::name.eq(new_name), users::email.eq(new_email)))
         .returning((users::id, users::name, users::email, users::profile_picture))
         .get_result::<(i64, String, String, Option<String>)>(&mut conn)
@@ -101,7 +101,7 @@ async fn patch_me(
 
 async fn put_me(
     State(state): State<AppState>,
-    Extension(user_id): Extension<i32>,
+    Extension(user_id): Extension<i64>,
     Json(payload): Json<UserPutPayload>,
 ) -> Result<Json<User>, AppError> {
     if payload.name.trim().is_empty() {
@@ -114,7 +114,7 @@ async fn put_me(
     let mut conn = state.pool.get().await?;
 
     let user = diesel::update(users::table)
-        .filter(users::id.eq(user_id as i64))
+        .filter(users::id.eq(user_id))
         .set((
             users::name.eq(payload.name.clone()),
             users::email.eq(payload.email.clone()),
@@ -133,7 +133,7 @@ async fn put_me(
 
 async fn update_profile_picture(
     State(state): State<AppState>,
-    Extension(user_id): Extension<i32>,
+    Extension(user_id): Extension<i64>,
     bytes: Bytes,
 ) -> Result<Json<ProfilePictureResponse>, AppError> {
     if bytes.is_empty() {
@@ -151,11 +151,25 @@ async fn update_profile_picture(
 
     let mut conn = state.pool.get().await?;
 
+    // Get old hash so we can delete the old file
+    let old_hash: Option<String> = users::table
+        .filter(users::id.eq(user_id))
+        .select(users::profile_picture)
+        .first::<Option<String>>(&mut conn)
+        .await?;
+
     diesel::update(users::table)
-        .filter(users::id.eq(user_id as i64))
+        .filter(users::id.eq(user_id))
         .set(users::profile_picture.eq(hash.clone()))
         .execute(&mut conn)
         .await?;
+
+    // Delete the old file if it exists and is different from the new hash
+    if let Some(old_hash) = old_hash
+        && old_hash != hash
+    {
+        let _ = storage::delete_image(&state.image_storage_path, &old_hash).await;
+    }
 
     Ok(Json(ProfilePictureResponse {
         profile_picture: hash,
@@ -164,22 +178,34 @@ async fn update_profile_picture(
 
 async fn delete_profile_picture(
     State(state): State<AppState>,
-    Extension(user_id): Extension<i32>,
+    Extension(user_id): Extension<i64>,
 ) -> Result<impl IntoResponse, AppError> {
     let mut conn = state.pool.get().await?;
 
+    // Get the current hash so we can delete the file
+    let current_hash: Option<String> = users::table
+        .filter(users::id.eq(user_id))
+        .select(users::profile_picture)
+        .first::<Option<String>>(&mut conn)
+        .await?;
+
     diesel::update(users::table)
-        .filter(users::id.eq(user_id as i64))
+        .filter(users::id.eq(user_id))
         .set(users::profile_picture.eq::<Option<String>>(None))
         .execute(&mut conn)
         .await?;
+
+    // Delete the file from disk
+    if let Some(current_hash) = current_hash {
+        let _ = storage::delete_image(&state.image_storage_path, &current_hash).await;
+    }
 
     Ok(StatusCode::NO_CONTENT)
 }
 
 async fn search_users(
     State(state): State<AppState>,
-    Extension(user_id): Extension<i32>,
+    Extension(user_id): Extension<i64>,
     Query(query): Query<UserSearchQuery>,
 ) -> Result<Json<UserSearchResponse>, AppError> {
     if query.q.trim().is_empty() {
@@ -187,12 +213,18 @@ async fn search_users(
     }
 
     let limit = query.limit.unwrap_or(10).clamp(1, 50);
-    let pattern = format!("%{}%", query.q);
+    // Escape LIKE wildcards so user input can't broaden the match
+    let escaped = query
+        .q
+        .replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_");
+    let pattern = format!("%{}%", escaped);
 
     let mut conn = state.pool.get().await?;
 
     let users = users::table
-        .filter(users::id.ne(user_id as i64))
+        .filter(users::id.ne(user_id))
         .filter(users::name.ilike(pattern))
         .select((users::id, users::name, users::profile_picture))
         .limit(limit)
@@ -214,6 +246,7 @@ async fn search_users(
 #[cfg(test)]
 mod tests {
     use crate::models::user::{UserPutPayload, UserUpdatePayload};
+    use crate::test_secrets::{TEST_EMAIL, TEST_NAME};
 
     #[tokio::test]
     async fn test_patch_me_validation() {
@@ -227,8 +260,8 @@ mod tests {
     #[tokio::test]
     async fn test_put_me_validation() {
         let payload = UserPutPayload {
-            name: "Test".to_string(),
-            email: "test@example.com".to_string(),
+            name: TEST_NAME.to_string(),
+            email: TEST_EMAIL.to_string(),
         };
         assert!(!payload.name.trim().is_empty());
     }

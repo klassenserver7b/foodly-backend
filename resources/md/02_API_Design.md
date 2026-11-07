@@ -3,9 +3,10 @@
 The API is a versioned REST API (`/api/v1/...`). WebSockets will be integrated in
 a future phase for real-time live editing.
 
-All endpoints (except login and register) require a valid JWT in the
-`Authorization: Bearer <token>` header. Responses use standard HTTP status codes
-and a consistent JSON error envelope.
+All endpoints require a valid JWT in the `Authorization: Bearer <token>` header,
+except the public ones (`/auth/register`, `/auth/login`, `/auth/refresh`, and
+`GET /images/:hash`). Responses use standard HTTP status codes and a consistent
+JSON error envelope.
 
 ---
 
@@ -74,7 +75,7 @@ Create a new user account.
 {
   "name": "Kolja",
   "email": "kolja@example.com",
-  "password": "hunter2"
+  "password": "password123"
 }
 ```
 
@@ -106,7 +107,7 @@ Authenticate with credentials and receive a JWT token pair.
 ```json
 {
   "email": "kolja@example.com",
-  "password": "hunter2"
+  "password": "password123"
 }
 ```
 
@@ -153,19 +154,26 @@ Exchange a valid refresh token for a new access/refresh token pair.
 
 ---
 
-### `POST /api/v1/auth/ws-ticket`
+### `POST /api/v1/auth/logout`
 
-Generate a short-lived (10–30 s) one-time ticket for authenticating a WebSocket connection. This prevents long-lived JWTs from appearing in query parameters or reverse-proxy logs.
+Revoke a refresh token. Requires authentication (Bearer access token).
 
-**Request:** *(empty body; auth via JWT header)*
-
-**Response `201 Created`:**
+**Request:**
 ```json
 {
-  "ticket": "a1b2c3d4-e5f6-...",
-  "expiresIn": 30
+  "refreshToken": "dGhpcyBpcyBhIHJlZnJlc2g..."
 }
 ```
+
+**Response:** `204 No Content`
+
+---
+
+### `DELETE /api/v1/auth/sessions`
+
+Revoke **all** refresh tokens for the authenticated user. Requires authentication.
+
+**Response:** `204 No Content`
 
 ---
 
@@ -799,7 +807,7 @@ Images are stored on the server's disk, addressed by content hash. The database 
 
 ### `POST /api/v1/images`
 
-Upload an image. Body is the raw image binary (`Content-Type: image/jpeg`, `image/png`, or `image/webp`).
+Upload an image. **Requires authentication** (`Authorization: Bearer <token>`). The uploader is recorded as `owner_id`. Body is the raw image binary (`Content-Type: image/jpeg`, `image/png`, or `image/webp`) — not multipart. The format is detected from magic bytes, not the request header. Max body size: 8 MiB.
 
 **Response `201 Created`:**
 ```json
@@ -810,11 +818,17 @@ Upload an image. Body is the raw image binary (`Content-Type: image/jpeg`, `imag
 }
 ```
 
+Re-uploading identical bytes is idempotent: the content hash already exists, so the existing row is returned.
+
+**Errors:**
+- `401 Unauthorized` — missing or invalid access token.
+- `422 Unprocessable Entity` — empty body, or unsupported format (only JPEG, PNG, WEBP).
+
 ---
 
 ### `GET /api/v1/images/:hash`
 
-Retrieve an image by its content hash. Returns the raw image binary with the appropriate `Content-Type` header. Supports `If-None-Match` / `ETag` for caching (the hash *is* the ETag).
+Retrieve an image by its content hash. **Public** — no authentication required, so `<img src>` tags work directly. Returns the raw image binary with the appropriate `Content-Type` header. Supports `If-None-Match` / `ETag` for caching (the hash *is* the ETag).
 
 **Response `200 OK`:** *(binary image data)*
 
@@ -828,7 +842,8 @@ Cache-Control: public, max-age=31536000, immutable
 > Because images are content-addressed (hash = filename), they are immutable — aggressive caching is safe.
 
 **Errors:**
-- `404 Not Found` — no image with this hash.
+- `304 Not Modified` — `If-None-Match` matched the current ETag.
+- `404 Not Found` — no image with this hash (or malformed hash).
 
 ---
 
@@ -836,10 +851,13 @@ Cache-Control: public, max-age=31536000, immutable
 
 Delete an image by its content hash from both the database and the server's disk.
 
+**Requires authentication** and the caller must be the uploader (owner). Non-owners receive `404` — the existence of someone else's image is never revealed (`404` rather than `403` is intentional).
+
 **Response `204 No Content`**
 
 **Errors:**
-- `404 Not Found` — no image with this hash.
+- `401 Unauthorized` — missing or invalid access token.
+- `404 Not Found` — no image with this hash **or** the caller is not the owner.
 
 ---
 
@@ -947,14 +965,99 @@ server → client (event):    { type: string, payload?: unknown }   // no id
 
 ---
 
+## Configuration & Deployment
+
+### Environment Variables
+
+| Variable                | Default                     | Description                                                                 |
+|-------------------------|-----------------------------|-----------------------------------------------------------------------------|
+| `JWT_SECRET`            | *(required)*                | Secret used to sign access tokens. Must be set in production.               |
+| `JWT_EXPIRY_MINUTES`    | `15`                        | Access-token lifetime in minutes. Refresh tokens rotate on use.             |
+| `RATE_LIMIT_MODE`       | `direct`                    | `direct` \| `proxy` \| `disabled` — see below.                              |
+| `TRUSTED_PROXIES`       | *(empty)*                   | Comma-separated proxy IPs/CIDRs trusted in `proxy` mode.                    |
+| `CORS_ALLOWED_ORIGINS`  | `http://localhost:5173`     | Comma-separated allowed browser origins.                                    |
+| `IMAGE_STORAGE_PATH`    | *(app default)*             | Root directory for content-addressed image files.                           |
+| `DATABASE_URL`          | *(required)*                | PostgreSQL connection string.                                               |
+
+### Rate limiting topology (`RATE_LIMIT_MODE`)
+
+The auth endpoints (`register`, `login`, `refresh`) are rate limited per client IP
+(5/min sustained, burst 5). How the client IP is resolved depends on deployment:
+
+- **`direct`** — the API is exposed directly. Only the TCP peer IP is used;
+  `X-Forwarded-For` / `X-Real-IP` are ignored so a client cannot spoof a fresh
+  bucket per request.
+- **`proxy`** — the API sits behind a reverse proxy (nginx, Caddy, a load
+  balancer). The **rightmost** `X-Forwarded-For` entry is used (the one appended
+  by our own proxy), then `X-Real-IP`, then the peer IP. The rightmost entry is
+  chosen because anything to its left is client-controlled and spoofable.
+  `TRUSTED_PROXIES` lists the proxies whose appended entry may be trusted.
+- **`disabled`** — the proxy already rate limits; the API does none. Use this
+  only when rate limiting is genuinely handled upstream.
+
+An unknown value fails fast at startup rather than silently choosing a topology.
+
+### HTTPS / production guidance
+
+**Production must serve the API over HTTPS.** JWTs (access + refresh tokens) are
+bearer credentials; over plain HTTP anyone on the path can replay them.
+
+Recommended setup: TLS terminates at nginx, which proxies to the app on
+`127.0.0.1`/localhost:
+
+```nginx
+server {
+    listen 443 ssl http2;
+    server_name api.example.com;
+
+    ssl_certificate     /etc/letsencrypt/live/api.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/api.example.com/privkey.pem;
+
+    client_max_body_size 10M;   # image uploads are capped at 8 MiB in-app
+
+    location / {
+        proxy_pass http://127.0.0.1:8080;
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+
+server {
+    listen 80;
+    server_name api.example.com;
+    return 301 https://$host$request_uri;
+}
+```
+
+With that topology set:
+
+```bash
+RATE_LIMIT_MODE=proxy
+TRUSTED_PROXIES=127.0.0.1,::1
+CORS_ALLOWED_ORIGINS=https://app.example.com
+```
+
+- `proxy_add_x_forwarded_for` **appends** the real client IP to any client-supplied
+  `X-Forwarded-For`; the app trusts only the rightmost entry.
+- If the API is exposed directly (no proxy), use `RATE_LIMIT_MODE=direct` and do
+  not send forwarded headers.
+- `CORS_ALLOWED_ORIGINS` should list only the real frontend origins — never `*` —
+  and must be HTTPS origins in production.
+- `TRUSTED_PROXIES` should be the narrowest set of proxy addresses possible.
+
+---
+
 ## Endpoint Summary
 
 | Method   | Path                                  | Auth | Description                                      |
 |----------|---------------------------------------|------|--------------------------------------------------|
 | `POST`   | `/api/v1/auth/register`               | no   | Create account                                   |
 | `POST`   | `/api/v1/auth/login`                  | no   | Login, get tokens                                |
-| `POST`   | `/api/v1/auth/refresh`                | no   | Refresh access token                             |
-| `POST`   | `/api/v1/auth/ws-ticket`              | yes  | Generate one-time WS ticket                      |
+| `POST`   | `/api/v1/auth/refresh`               | no   | Refresh access token                             |
+| `POST`   | `/api/v1/auth/logout`                | yes  | Logout (revoke refresh token)                    |
+| `DELETE` | `/api/v1/auth/sessions`              | yes  | Logout all sessions                              |
 | `GET`    | `/api/v1/users/me`                    | yes  | Current user profile                             |
 | `PATCH`  | `/api/v1/users/me`                    | yes  | Update own profile                               |
 | `PUT`    | `/api/v1/users/me/profile-picture`    | yes  | Upload/replace profile picture                   |
@@ -983,6 +1086,7 @@ server → client (event):    { type: string, payload?: unknown }   // no id
 | `GET`    | `/api/v1/tags`                        | yes  | List all tags                                    |
 | `GET`    | `/api/v1/tags/:id/icon`               | yes  | Get tag SVG icon                                 |
 | `GET`    | `/api/v1/ingredients`                 | yes  | List ingredient catalog                          |
-| `POST`   | `/api/v1/images`                      | yes  | Upload image                                     |
-| `GET`    | `/api/v1/images/:hash`                | yes  | Get image by hash                                |
+| `POST`   | `/api/v1/images`                      | yes  | Upload image (records owner)                     |
+| `GET`    | `/api/v1/images/:hash`                | no   | Get image by hash (public, cacheable)            |
+| `DELETE` | `/api/v1/images/:hash`                | yes  | Delete image (owner only; non-owner 404)         |
 | `POST`   | `/api/v1/sync`                        | yes  | Submit offline change backlog                    |

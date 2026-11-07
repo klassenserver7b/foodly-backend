@@ -33,7 +33,7 @@ decisions.
 
 - **WebSocket API**: Primary communication layer for syncing recipe changes and broadcasting updates to subscribed
   clients.
-- **REST API**: Handles initial connection bootstrapping, such as authentication (`/login`).
+- **REST API**: Handles initial connection bootstrapping, such as authentication (`/api/v1/auth/login`).
 - **Sync Strategy**: Custom backlog processing. The server applies offline changes sequentially and drops incoming
   conflicting changes to maintain a consistent state.
 
@@ -50,13 +50,17 @@ To get a local development environment running with mock data, follow these step
    Migrations are applied automatically at server startup — each `.sql` file in `src/db/migrations/` is embedded into the binary and executed idempotently on the database. No manual table setup is required.
 
 3. **Seed the database (Optional):**
-   If you want to populate the database with mock recipes and users to start testing immediately, you can apply the provided seed script directly into the running Postgres container:
+   Run the seed binary to populate the database with mock recipes and users.
+   It generates pepper-bound argon2id password hashes at seed time, so the
+   seeded users can actually log in (password: `password123`):
    ```bash
-   docker exec -i foodly_postgres psql -U postgres -d foodly < resources/mock/seed.sql
+   cargo run --bin seed
    ```
 
 4. **Run the server:**
-   Ensure you have configured `.env` correctly (a `.env.example` is provided), then run the application:
+   `JWT_SECRET` and `PASSWORD_PEPPER` are auto-generated on first run and
+   persisted to `.env` (see `src/main.rs` `bootstrap_secrets`). Ensure
+   `.env` exists (copy from `.env.example`), then run:
    ```bash
    cargo run
    ```

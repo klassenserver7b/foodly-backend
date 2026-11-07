@@ -1,28 +1,67 @@
-use crate::{AppState, error::AppError, models::image::Image, services::storage};
+use std::sync::Arc;
+
 use axum::{
-    Json, Router,
+    Extension, Json, Router,
     body::Bytes,
     extract::{Path, State},
     http::{HeaderMap, HeaderValue, StatusCode, header},
     response::{IntoResponse, Response},
-    routing::{get, post},
+    routing::{delete, get, post},
 };
 use diesel::prelude::*;
 use diesel_async::RunQueryDsl;
 
+use tower_governor::GovernorLayer;
+use tower_governor::governor::GovernorConfigBuilder;
+
+use crate::error::AppError;
+use crate::models::image::Image;
+use crate::services::storage;
+use crate::{AppState, RateLimitMode, SecureClientIpKeyExtractor};
+
 use crate::schema::images;
 
-pub fn router() -> Router<AppState> {
+/// Public routes: anyone can view an image by hash (no auth required).
+pub fn public_router() -> Router<AppState> {
+    Router::new().route("/{hash}", get(get_image))
+}
+
+/// Protected routes: require auth. Upload records the uploader as owner;
+/// delete is restricted to the owner. Rate limited per client IP
+/// (unless RATE_LIMIT_MODE=disabled, e.g. in tests).
+pub fn protected_router() -> Router<AppState> {
+    let mode = RateLimitMode::from_env();
+    if mode == RateLimitMode::Disabled {
+        return Router::new()
+            .route(
+                "/",
+                post(upload_image).layer(axum::extract::DefaultBodyLimit::max(8 * 1024 * 1024)),
+            )
+            .route("/{hash}", delete(delete_image));
+    }
+
+    let governor_conf = Arc::new(
+        GovernorConfigBuilder::default()
+            .per_second(60) // 1 token per 60s = 1 upload/min sustained
+            .burst_size(10) // burst of 10
+            .key_extractor(SecureClientIpKeyExtractor { mode })
+            .finish()
+            .unwrap(),
+    );
+    let governor_layer = GovernorLayer::new(governor_conf);
+
     Router::new()
         .route(
             "/",
             post(upload_image).layer(axum::extract::DefaultBodyLimit::max(8 * 1024 * 1024)),
         )
-        .route("/{hash}", get(get_image).delete(delete_image))
+        .route("/{hash}", delete(delete_image))
+        .route_layer(governor_layer)
 }
 
 async fn upload_image(
     State(state): State<AppState>,
+    Extension(user_id): Extension<i64>,
     bytes: Bytes,
 ) -> Result<(StatusCode, Json<Image>), AppError> {
     if bytes.is_empty() {
@@ -44,10 +83,11 @@ async fn upload_image(
         .values((
             images::hash.eq(&hash),
             images::name.eq::<Option<String>>(None),
+            images::owner_id.eq(user_id),
         ))
         .on_conflict(images::hash)
         .do_update()
-        .set(images::hash.eq(&hash))
+        .set((images::hash.eq(&hash), images::owner_id.eq(user_id)))
         .returning((images::id, images::hash, images::name))
         .get_result::<(i64, String, Option<String>)>(&mut conn)
         .await?;
@@ -62,12 +102,38 @@ async fn upload_image(
     ))
 }
 
+/// A valid image hash: exactly 64 lowercase hex characters (SHA-256).
+/// Rejects path traversal, mixed case, and non-hex input before the
+/// value is ever used as a filesystem path component.
+fn validate_hash(hash: &str) -> Result<(), AppError> {
+    crate::services::storage::validate_hash(hash)
+        .map_err(|_| AppError::NotFound("Image not found".to_string()))
+}
+
 async fn get_image(
     State(state): State<AppState>,
     Path(hash): Path<String>,
     headers: HeaderMap,
 ) -> Result<Response, AppError> {
-    let etag_value = format!("\"{}\"", hash);
+    // Validate BEFORE any other logic so a malformed hash can never
+    // reach the filesystem path construction, even via the etag path.
+    validate_hash(&hash)?;
+
+    let mut conn = state.pool.get().await?;
+
+    // Only serve images that have a row in the `images` table.
+    // This prevents serving profile pictures, tag icons, or any other
+    // file that happens to be in the storage directory without a
+    // corresponding `images` row.
+    let image = images::table
+        .filter(images::hash.eq(&hash))
+        .select((images::id, images::hash, images::name))
+        .first::<(i64, String, Option<String>)>(&mut conn)
+        .await
+        .optional()?
+        .ok_or_else(|| AppError::NotFound("Image not found".to_string()))?;
+
+    let etag_value = format!("\"{}\"", image.1);
     if headers
         .get(header::IF_NONE_MATCH)
         .and_then(|h| h.to_str().ok())
@@ -76,20 +142,16 @@ async fn get_image(
         return Ok(StatusCode::NOT_MODIFIED.into_response());
     }
 
-    if hash.len() < 4 {
-        return Err(AppError::NotFound("Image not found".to_string()));
-    }
-
-    let bytes = storage::read_image(&state.image_storage_path, &hash)
+    let bytes = storage::read_image(&state.image_storage_path, &image.1)
         .await
         .map_err(|_| AppError::NotFound("Image not found".to_string()))?;
     let content_type = infer_content_type(&bytes);
 
     let mut response = bytes.into_response();
-    let headers = response.headers_mut();
-    headers.insert(header::CONTENT_TYPE, HeaderValue::from_static(content_type));
-    headers.insert(header::ETAG, HeaderValue::from_str(&etag_value).unwrap());
-    headers.insert(
+    let response_headers = response.headers_mut();
+    response_headers.insert(header::CONTENT_TYPE, HeaderValue::from_static(content_type));
+    response_headers.insert(header::ETAG, HeaderValue::from_str(&etag_value).unwrap());
+    response_headers.insert(
         header::CACHE_CONTROL,
         HeaderValue::from_static("public, max-age=31536000, immutable"),
     );
@@ -99,12 +161,17 @@ async fn get_image(
 
 async fn delete_image(
     State(state): State<AppState>,
+    Extension(user_id): Extension<i64>,
     Path(hash): Path<String>,
 ) -> Result<StatusCode, AppError> {
+    validate_hash(&hash)?;
+
     let mut conn = state.pool.get().await?;
 
+    // Only the owner can delete their image
     let result = diesel::delete(images::table)
         .filter(images::hash.eq(&hash))
+        .filter(images::owner_id.eq(user_id))
         .execute(&mut conn)
         .await?;
 

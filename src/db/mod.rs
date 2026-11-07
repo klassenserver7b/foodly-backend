@@ -26,6 +26,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("migrations/010_create_categories.sql"),
     include_str!("migrations/011_create_groups.sql"),
     include_str!("migrations/012_create_auth_tokens.sql"),
+    include_str!("migrations/013_add_images_owner_id.sql"),
 ];
 
 /// Initializes the diesel-async connection pool and applies pending migrations.
