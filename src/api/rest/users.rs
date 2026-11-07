@@ -243,25 +243,6 @@ async fn search_users(
     Ok(Json(UserSearchResponse { data }))
 }
 
-#[cfg(test)]
-mod tests {
-    use crate::models::user::{UserPutPayload, UserUpdatePayload};
-
-    #[tokio::test]
-    async fn test_patch_me_validation() {
-        let payload = UserUpdatePayload {
-            name: Some("".to_string()),
-            email: None,
-        };
-        assert!(payload.name.as_ref().unwrap().trim().is_empty());
-    }
-
-    #[tokio::test]
-    async fn test_put_me_validation() {
-        let payload = UserPutPayload {
-            name: "Test".to_string(),
-            email: "test@example.com".to_string(),
-        };
-        assert!(!payload.name.trim().is_empty());
-    }
-}
+// Unit tests for this module live in tests/users_validation_tests.rs —
+// moved out of src/ so CodeQL does not flag test fixtures inside
+// production source files.
