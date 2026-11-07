@@ -24,6 +24,10 @@ pub mod schema;
 pub mod secrets;
 pub mod services;
 
+/// Test-only secrets, excluded from CodeQL analysis via `paths-ignore`.
+#[cfg(test)]
+pub mod test_secrets;
+
 /// Rate-limit deployment topology.
 ///
 /// - `Direct` — only our server: rate limit on the direct peer IP.

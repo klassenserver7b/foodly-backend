@@ -246,6 +246,7 @@ async fn search_users(
 #[cfg(test)]
 mod tests {
     use crate::models::user::{UserPutPayload, UserUpdatePayload};
+    use crate::test_secrets::{TEST_EMAIL, TEST_NAME};
 
     #[tokio::test]
     async fn test_patch_me_validation() {
@@ -259,8 +260,8 @@ mod tests {
     #[tokio::test]
     async fn test_put_me_validation() {
         let payload = UserPutPayload {
-            name: "Test".to_string(),
-            email: "test@example.com".to_string(),
+            name: TEST_NAME.to_string(),
+            email: TEST_EMAIL.to_string(),
         };
         assert!(!payload.name.trim().is_empty());
     }

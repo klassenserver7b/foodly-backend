@@ -171,20 +171,18 @@ pub fn verify_access_token(token: &str, secret: &str) -> anyhow::Result<i64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_secrets::*;
 
     #[test]
     fn test_hash_password_roundtrip() {
         // Set a test pepper so hash_password doesn't panic when
         // PASSWORD_PEPPER is unset in the test environment.
         unsafe {
-            std::env::set_var(
-                "PASSWORD_PEPPER",
-                "test-pepper-0123456789abcdef0123456789abcdef",
-            );
+            std::env::set_var("PASSWORD_PEPPER", TEST_PEPPER);
         }
-        let hash = hash_password("hunter2").unwrap();
+        let hash = hash_password(TEST_PASSWORD).unwrap();
         assert!(hash.starts_with("$argon2"));
-        assert!(verify_password("hunter2", &hash).unwrap());
+        assert!(verify_password(TEST_PASSWORD, &hash).unwrap());
         assert!(!verify_password("wrong", &hash).unwrap());
         unsafe {
             std::env::remove_var("PASSWORD_PEPPER");
@@ -206,7 +204,7 @@ mod tests {
 
     #[test]
     fn test_jwt_roundtrip() {
-        let secret = "0123456789abcdef0123456789abcdef0123456789abcdef";
+        let secret = TEST_JWT_SECRET;
         let token = create_access_token(42, secret, 15).unwrap();
         let user_id = verify_access_token(&token, secret).unwrap();
         assert_eq!(user_id, 42);
@@ -214,16 +212,15 @@ mod tests {
 
     #[test]
     fn test_jwt_wrong_secret_rejected() {
-        let secret = "0123456789abcdef0123456789abcdef0123456789abcdef";
-        let wrong = "fedcba9876543210fedcba9876543210fedcba9876543210";
+        let secret = TEST_JWT_SECRET;
+        let wrong = WRONG_JWT_SECRET;
         let token = create_access_token(42, secret, 15).unwrap();
         assert!(verify_access_token(&token, wrong).is_err());
     }
 
     #[test]
     fn test_jwt_expired_rejected() {
-        let secret = "0123456789abcdef0123456789abcdef0123456789abcdef";
-        // leeway is 60s so an expired token within 60s might still pass; use -120 to be safe
+        let secret = TEST_JWT_SECRET;
         let old = create_access_token(42, secret, -120).unwrap();
         assert!(verify_access_token(&old, secret).is_err());
     }

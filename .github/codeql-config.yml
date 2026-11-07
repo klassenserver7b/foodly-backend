@@ -3,3 +3,4 @@
 # trip the hard-coded-credential queries. Production code keeps full coverage.
 paths-ignore:
   - 'tests/**'
+  - 'src/test_secrets.rs'
