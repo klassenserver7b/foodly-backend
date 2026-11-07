@@ -39,6 +39,15 @@ async fn test_pool() -> DbPool {
             std::env::set_var("JWT_SECRET", "foodly-test-jwt-secret-0123456789abcdef");
         }
     }
+    // Ensure a pepper is set for auth endpoint tests. This is a
+    // deterministic test pepper, not a production pepper.
+    // SAFETY: Safe because we're in single-threaded test setup before
+    // any test handlers run concurrently.
+    if std::env::var("PASSWORD_PEPPER").is_err() {
+        unsafe {
+            std::env::set_var("PASSWORD_PEPPER", "foodly-test-pepper-0123456789abcdef");
+        }
+    }
     let _ = dotenvy::dotenv();
     let base = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
         let user = std::env::var("POSTGRES_USER").unwrap_or_else(|_| "postgres".to_string());
