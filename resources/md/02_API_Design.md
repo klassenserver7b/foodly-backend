@@ -971,8 +971,10 @@ server → client (event):    { type: string, payload?: unknown }   // no id
 
 | Variable                | Default                     | Description                                                                 |
 |-------------------------|-----------------------------|-----------------------------------------------------------------------------|
-| `JWT_SECRET`            | *(required)*                | Secret used to sign access tokens. Must be set in production.               |
+| `JWT_SECRET`            | *(auto-generated)*           | Secret used to sign access tokens. Generated on first boot if not set.      |
+| `PASSWORD_PEPPER`       | *(auto-generated)*           | Argon2id pepper. Generated on first boot if not set.                        |
 | `JWT_EXPIRY_MINUTES`    | `15`                        | Access-token lifetime in minutes. Refresh tokens rotate on use.             |
+| `REFRESH_TOKEN_EXPIRY_DAYS` | `30`                    | Refresh-token lifetime in days.                                            |
 | `RATE_LIMIT_MODE`       | `direct`                    | `direct` \| `proxy` \| `disabled` — see below.                              |
 | `TRUSTED_PROXIES`       | *(empty)*                   | Comma-separated proxy IPs/CIDRs trusted in `proxy` mode.                    |
 | `CORS_ALLOWED_ORIGINS`  | `http://localhost:5173`     | Comma-separated allowed browser origins.                                    |

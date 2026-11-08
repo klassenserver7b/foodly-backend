@@ -19,7 +19,7 @@ use crate::models::image::Image;
 use crate::services::storage;
 use crate::{AppState, RateLimitMode, SecureClientIpKeyExtractor};
 
-use crate::schema::images;
+use crate::schema::{images, recipe_images, recipes, users};
 
 /// Public routes: anyone can view an image by hash (no auth required).
 pub fn public_router() -> Router<AppState> {
@@ -79,6 +79,8 @@ async fn upload_image(
 
     let mut conn = state.pool.get().await?;
 
+    // Re-uploading identical bytes is idempotent: the existing row is returned
+    // and its owner is kept.
     let image = diesel::insert_into(images::table)
         .values((
             images::hash.eq(&hash),
@@ -86,14 +88,27 @@ async fn upload_image(
             images::owner_id.eq(user_id),
         ))
         .on_conflict(images::hash)
-        .do_update()
-        .set((images::hash.eq(&hash), images::owner_id.eq(user_id)))
+        .do_nothing()
         .returning((images::id, images::hash, images::name))
         .get_result::<(i64, String, Option<String>)>(&mut conn)
-        .await?;
+        .await
+        .optional()?;
+
+    let (image, status_code) = match image {
+        Some(image) => (image, StatusCode::CREATED),
+        None => {
+            // Hash already exists — fetch the existing row, keeping its owner
+            let image = images::table
+                .filter(images::hash.eq(&hash))
+                .select((images::id, images::hash, images::name))
+                .first::<(i64, String, Option<String>)>(&mut conn)
+                .await?;
+            (image, StatusCode::OK)
+        }
+    };
 
     Ok((
-        StatusCode::CREATED,
+        status_code,
         Json(Image {
             id: image.0,
             hash: image.1,
@@ -168,17 +183,58 @@ async fn delete_image(
 
     let mut conn = state.pool.get().await?;
 
-    // Only the owner can delete their image
-    let result = diesel::delete(images::table)
+    // Find the image (must exist and be owned by the caller)
+    let image = images::table
         .filter(images::hash.eq(&hash))
-        .filter(images::owner_id.eq(user_id))
-        .execute(&mut conn)
-        .await?;
+        .select((images::id, images::owner_id))
+        .first::<(i64, Option<i64>)>(&mut conn)
+        .await
+        .optional()?
+        .ok_or_else(|| AppError::NotFound("Image not found".to_string()))?;
 
-    if result == 0 {
+    let (image_id, owner_id) = image;
+
+    if owner_id != Some(user_id) {
         return Err(AppError::NotFound("Image not found".to_string()));
     }
 
+    // Check if anyone uses this hash as their profile picture
+    let profile_pic_used: bool = diesel::select(diesel::dsl::exists(
+        users::table.filter(users::profile_picture.eq(&hash)),
+    ))
+    .first(&mut conn)
+    .await?;
+
+    // Check if the image is referenced by any recipe (as main image or gallery image)
+    let is_referenced: bool = diesel::select(diesel::dsl::exists(
+        recipe_images::table.filter(recipe_images::image_id.eq(image_id)),
+    ))
+    .first(&mut conn)
+    .await?;
+
+    let is_main: bool = diesel::select(diesel::dsl::exists(
+        recipes::table.filter(recipes::main_image_id.eq(image_id)),
+    ))
+    .first(&mut conn)
+    .await?;
+
+    if profile_pic_used || is_referenced || is_main {
+        // Image is still referenced: orphan it (remove ownership, keep the file)
+        diesel::update(images::table)
+            .filter(images::id.eq(image_id))
+            .set(images::owner_id.eq::<Option<i64>>(None))
+            .execute(&mut conn)
+            .await?;
+        // Return 204 — the caller no longer owns the image, but the file stays
+        // on disk for the recipes that reference it
+        return Ok(StatusCode::NO_CONTENT);
+    }
+
+    // Not referenced: delete the row and the file
+    diesel::delete(images::table)
+        .filter(images::id.eq(image_id))
+        .execute(&mut conn)
+        .await?;
     let _ = storage::delete_image(&state.image_storage_path, &hash).await;
 
     Ok(StatusCode::NO_CONTENT)

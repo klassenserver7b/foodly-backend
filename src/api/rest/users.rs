@@ -17,9 +17,9 @@ use crate::{
     services::storage,
 };
 use diesel::prelude::*;
-use diesel_async::RunQueryDsl;
+use diesel_async::{AsyncPgConnection, RunQueryDsl};
 
-use crate::schema::users;
+use crate::schema::{images, recipe_images, recipes, users};
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -164,16 +164,75 @@ async fn update_profile_picture(
         .execute(&mut conn)
         .await?;
 
-    // Delete the old file if it exists and is different from the new hash
+    // Only delete the old file if nothing still references it (another
+    // user's profile picture, or a recipe image)
     if let Some(old_hash) = old_hash
         && old_hash != hash
     {
-        let _ = storage::delete_image(&state.image_storage_path, &old_hash).await;
+        let still_referenced = is_image_still_referenced(&mut conn, &old_hash, user_id).await?;
+        if !still_referenced {
+            let _ = storage::delete_image(&state.image_storage_path, &old_hash).await;
+        }
     }
 
     Ok(Json(ProfilePictureResponse {
         profile_picture: hash,
     }))
+}
+
+/// Check whether the image file for `hash` is still referenced by anyone:
+/// - as another user's profile picture
+/// - as a recipe gallery image (`recipe_images.image_id` → `images.id`)
+/// - as a recipe main image (`recipes.main_image_id` → `images.id`)
+///
+/// If true, the file must not be deleted from disk.
+async fn is_image_still_referenced(
+    conn: &mut AsyncPgConnection,
+    hash: &str,
+    exclude_user_id: i64,
+) -> Result<bool, AppError> {
+    // Another user still uses this hash as their profile picture
+    let profile_used: bool = diesel::select(diesel::dsl::exists(
+        users::table
+            .filter(users::id.ne(exclude_user_id))
+            .filter(users::profile_picture.eq(hash)),
+    ))
+    .first(conn)
+    .await?;
+    if profile_used {
+        return Ok(true);
+    }
+
+    // The image is used as a recipe gallery image: recipe_images.image_id
+    // references images.id, so find the images row for this hash and check
+    // whether any recipe still references it
+    let image_id: Option<i64> = images::table
+        .filter(images::hash.eq(hash))
+        .select(images::id)
+        .first::<i64>(conn)
+        .await
+        .optional()?;
+    if let Some(image_id) = image_id {
+        let gallery_used: bool = diesel::select(diesel::dsl::exists(
+            recipe_images::table.filter(recipe_images::image_id.eq(image_id)),
+        ))
+        .first(conn)
+        .await?;
+        if gallery_used {
+            return Ok(true);
+        }
+
+        let main_used: bool = diesel::select(diesel::dsl::exists(
+            recipes::table.filter(recipes::main_image_id.eq(image_id)),
+        ))
+        .first(conn)
+        .await?;
+        if main_used {
+            return Ok(true);
+        }
+    }
+
+    Ok(false)
 }
 
 async fn delete_profile_picture(
@@ -195,9 +254,12 @@ async fn delete_profile_picture(
         .execute(&mut conn)
         .await?;
 
-    // Delete the file from disk
+    // Delete the file from disk only if nothing still references it
     if let Some(current_hash) = current_hash {
-        let _ = storage::delete_image(&state.image_storage_path, &current_hash).await;
+        let still_referenced = is_image_still_referenced(&mut conn, &current_hash, user_id).await?;
+        if !still_referenced {
+            let _ = storage::delete_image(&state.image_storage_path, &current_hash).await;
+        }
     }
 
     Ok(StatusCode::NO_CONTENT)
