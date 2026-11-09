@@ -1068,3 +1068,104 @@ async fn test_recipe_search_sort_by_access_since() {
         "descending access_since must list the most recently created recipe first"
     );
 }
+
+// ─── Categories: PUT /categories/order ────────────────────────────────────
+
+/// Helper: create a category via `POST /api/v1/categories` and return the
+/// created category JSON (including its `id`).
+async fn create_test_category(app: &axum::Router, token: &str, name: &str) -> Value {
+    let payload = serde_json::json!({ "name": name, "color": "#ff0000" });
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/categories")
+                .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(serde_json::to_vec(&payload).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(
+        response.status(),
+        StatusCode::OK,
+        "category creation failed"
+    );
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    serde_json::from_slice(&body).unwrap()
+}
+
+#[tokio::test]
+async fn test_categories_order_reorders_categories() {
+    let app = app(test_state().await);
+    let (token, _) = register_test_user(&app, "Test User", "test@example.com", "password123").await;
+
+    let cat1 = create_test_category(&app, &token, "Breakfast").await;
+    let cat2 = create_test_category(&app, &token, "Dinner").await;
+
+    // Reorder: Dinner first, Breakfast second
+    let payload = serde_json::json!({ "categoryIds": [cat2["id"], cat1["id"]] });
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/api/v1/categories/order")
+                .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(serde_json::to_vec(&payload).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: Value = serde_json::from_slice(&body).unwrap();
+
+    let ids: Vec<i64> = json["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|p| p["id"].as_i64().unwrap())
+        .collect();
+    assert_eq!(
+        ids,
+        vec![cat2["id"].as_i64().unwrap(), cat1["id"].as_i64().unwrap(),],
+        "reorder response must reflect the requested order"
+    );
+}
+
+#[tokio::test]
+async fn test_categories_order_rejects_too_many_ids() {
+    let app = app(test_state().await);
+    let (token, _) = register_test_user(&app, "Test User", "test@example.com", "password123").await;
+
+    // 101 distinct ids — one more than MAX_REORDER_IDS
+    let too_many: Vec<i64> = (1..=101).collect();
+    let payload = serde_json::json!({ "categoryIds": too_many });
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/api/v1/categories/order")
+                .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(serde_json::to_vec(&payload).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(
+        json["error"]["message"], "categoryIds accepts at most 100 entries",
+        "over-cap payload must be rejected with a clear message"
+    );
+}

@@ -269,14 +269,26 @@ async fn update_category_recipes(
     Ok(Json(category))
 }
 
+/// Upper bound on the category IDs accepted in one reorder request.
+/// The handler issues one UPDATE per ID, so an unbounded list lets a
+/// single authenticated request monopolize a pooled DB connection
+/// (and its memory) for minutes.
+const MAX_REORDER_IDS: usize = 100;
+
 async fn reorder_categories(
     State(state): State<AppState>,
     Extension(user_id): Extension<i64>,
     Json(payload): Json<ReorderCategories>,
 ) -> Result<Json<CategoryOrderResponse>, AppError> {
+    if payload.category_ids.len() > MAX_REORDER_IDS {
+        return Err(AppError::Unprocessable(format!(
+            "categoryIds accepts at most {MAX_REORDER_IDS} entries"
+        )));
+    }
+
     let u_id = user_id;
     let mut conn = state.pool.get().await?;
-    let mut data = Vec::with_capacity(payload.category_ids.len());
+    let mut data = Vec::new();
 
     for (i, cat_id) in payload.category_ids.iter().enumerate() {
         let c_id = *cat_id;

@@ -711,6 +711,8 @@ Set the ordered list of recipe IDs in this category (replaces the current list).
 
 Reorder all categories at once. Expects the full list of category IDs in the desired order.
 
+**Bound:** at most **100** category IDs per request (`422 Unprocessable` beyond that).
+
 **Request:**
 ```json
 {
