@@ -1053,17 +1053,18 @@ async fn test_recipe_search_sort_by_access_since() {
     let body = response.into_body().collect().await.unwrap().to_bytes();
     let json: Value = serde_json::from_slice(&body).unwrap();
 
-    let mut ids: Vec<i64> = json["data"]
+    let ids: Vec<i64> = json["data"]
         .as_array()
         .unwrap()
         .iter()
         .map(|p| p["id"].as_i64().unwrap())
         .collect();
-    ids.sort_unstable();
-    let mut expected = vec![
-        first["id"].as_i64().unwrap(),
-        second["id"].as_i64().unwrap(),
-    ];
-    expected.sort_unstable();
-    assert_eq!(ids, expected);
+    assert_eq!(
+        ids,
+        vec![
+            second["id"].as_i64().unwrap(),
+            first["id"].as_i64().unwrap(),
+        ],
+        "descending access_since must list the most recently created recipe first"
+    );
 }
