@@ -56,7 +56,7 @@ pub(super) async fn insert_section(
         diesel::insert_into(recipe_ingredients::table)
             .values((
                 recipe_ingredients::section_id.eq(sec_id),
-                recipe_ingredients::ingredient_id.eq(ing.ingredient.map(i64::from)),
+                recipe_ingredients::ingredient_id.eq(ing.ingredient),
                 recipe_ingredients::text.eq(ing.text),
                 recipe_ingredients::amount.eq(ing.amount),
                 recipe_ingredients::amount_prefix.eq(ing.amount_prefix),
@@ -118,9 +118,9 @@ pub(super) async fn fetch_sections(
             .map(
                 |(id, ingredient_id, ingredient_name, text, amount, amount_prefix, unit)| {
                     RecipeIngredient {
-                        id: id as i32,
+                        id,
                         ingredient: ingredient_id.map(|iid| IngredientRef {
-                            id: iid as i32,
+                            id: iid,
                             name: ingredient_name.unwrap_or_default(),
                         }),
                         text,
@@ -133,7 +133,7 @@ pub(super) async fn fetch_sections(
             .collect();
 
         result.push(Section {
-            id: sec_id as i32,
+            id: sec_id,
             name: sec_name,
             steps: step_rows,
             ingredients: ings,
@@ -171,7 +171,7 @@ pub(super) async fn insert_recipe_tags(
 
 pub(super) async fn insert_recipe_images(
     r_id: i64,
-    images: Vec<i32>,
+    images: Vec<i64>,
     conn: &mut AsyncPgConnection,
 ) -> Result<(), AppError> {
     if images.is_empty() {
@@ -183,7 +183,7 @@ pub(super) async fn insert_recipe_images(
         .map(|(pos, img)| {
             (
                 recipe_images::recipe_id.eq(r_id),
-                recipe_images::image_id.eq(i64::from(img)),
+                recipe_images::image_id.eq(img),
                 recipe_images::position.eq(pos as i32),
             )
         })
@@ -210,7 +210,7 @@ pub(super) async fn replace_recipe_tags(
 
 pub(super) async fn replace_recipe_images(
     r_id: i64,
-    images: Vec<i32>,
+    images: Vec<i64>,
     conn: &mut AsyncPgConnection,
 ) -> Result<(), AppError> {
     diesel::delete(recipe_images::table)
@@ -277,7 +277,7 @@ pub(super) async fn update_recipe_metadata(
             recipes::size_number.eq(payload.size_number),
             recipes::size_text.eq(payload.size_text.clone()),
             recipes::notes.eq(payload.notes.clone()),
-            recipes::main_image_id.eq(payload.main_image.map(i64::from)),
+            recipes::main_image_id.eq(payload.main_image),
             recipes::updated_at.eq(diesel::dsl::now),
         ))
         .execute(conn)
@@ -296,12 +296,8 @@ pub(super) fn create_recipe_copy(original: Recipe) -> CreateRecipe {
         size_number: original.size_number,
         size_text: original.size_text,
         notes: original.notes,
-        main_image: original.main_image.map(|img| img.id as i32),
-        images: original
-            .images
-            .into_iter()
-            .map(|img| img.id as i32)
-            .collect(),
+        main_image: original.main_image.map(|img| img.id),
+        images: original.images.into_iter().map(|img| img.id).collect(),
         sections: original
             .sections
             .into_iter()

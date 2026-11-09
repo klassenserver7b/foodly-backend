@@ -2,10 +2,10 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Category {
-    pub id: i32,
-    pub user: i32,
+    pub id: i64,
+    pub user: i64,
     pub name: String,
-    pub recipes: Vec<i32>,
+    pub recipes: Vec<i64>,
     pub order: i32,
     pub color: String,
     #[serde(rename = "colorLight")]
@@ -27,18 +27,18 @@ pub struct CreateCategory {
 #[derive(Debug, Deserialize)]
 pub struct UpdateCategoryRecipes {
     #[serde(rename = "recipeIds")]
-    pub recipe_ids: Vec<i32>,
+    pub recipe_ids: Vec<i64>,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct ReorderCategories {
     #[serde(rename = "categoryIds")]
-    pub category_ids: Vec<i32>,
+    pub category_ids: Vec<i64>,
 }
 
 #[derive(Debug, Serialize)]
 pub struct CategoryOrderPair {
-    pub id: i32,
+    pub id: i64,
     pub order: i32,
 }
 

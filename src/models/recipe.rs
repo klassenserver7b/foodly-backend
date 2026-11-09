@@ -7,13 +7,13 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UserRating {
-    pub user: i32,
-    pub rating: i32,
+    pub user: i64,
+    pub rating: i16,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IngredientRef {
-    pub id: i32,
+    pub id: i64,
     pub name: String,
 }
 
@@ -32,7 +32,7 @@ pub struct ImageRef {
 #[serde(rename_all = "camelCase")]
 pub struct RecipeIngredient {
     #[serde(skip_deserializing, default)]
-    pub id: i32,
+    pub id: i64,
     pub ingredient: Option<IngredientRef>,
     pub text: Option<String>,
     pub amount: Option<String>,
@@ -44,7 +44,7 @@ pub struct RecipeIngredient {
 #[serde(rename_all = "camelCase")]
 pub struct Section {
     #[serde(skip_deserializing, default)]
-    pub id: i32,
+    pub id: i64,
     pub name: Option<String>,
     pub ingredients: Vec<RecipeIngredient>,
     pub steps: Vec<String>,
@@ -57,12 +57,12 @@ pub struct Section {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Recipe {
-    pub id: i32,
-    pub owner: i32,
+    pub id: i64,
+    pub owner: i64,
     #[serde(default)]
-    pub editors: Vec<i32>,
+    pub editors: Vec<i64>,
     #[serde(default)]
-    pub viewers: Vec<i32>,
+    pub viewers: Vec<i64>,
     pub name: String,
     #[serde(default)]
     pub tags: Vec<String>,
@@ -95,10 +95,10 @@ pub struct Recipe {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RecipePreview {
-    pub id: i32,
-    pub owner: i32,
-    pub editors: Vec<i32>,
-    pub viewers: Vec<i32>,
+    pub id: i64,
+    pub owner: i64,
+    pub editors: Vec<i64>,
+    pub viewers: Vec<i64>,
     pub name: String,
     pub tags: Vec<String>,
     pub source: Option<String>,
@@ -142,7 +142,7 @@ impl From<Recipe> for RecipePreview {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CreateRecipeIngredient {
-    pub ingredient: Option<i32>,
+    pub ingredient: Option<i64>,
     pub text: Option<String>,
     pub amount: Option<String>,
     pub amount_prefix: Option<String>,
@@ -182,9 +182,9 @@ pub struct CreateRecipe {
     pub size_text: Option<String>,
     #[serde(default)]
     pub notes: Vec<String>,
-    pub main_image: Option<i32>,
+    pub main_image: Option<i64>,
     #[serde(default)]
-    pub images: Vec<i32>,
+    pub images: Vec<i64>,
     #[serde(default)]
     pub sections: Vec<CreateSection>,
 }

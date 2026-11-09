@@ -77,10 +77,10 @@ async fn list_categories(
             .await?;
 
         data.push(Category {
-            id: rec.0 as i32,
-            user: rec.1 as i32,
+            id: rec.0,
+            user: rec.1,
             name: rec.2.clone(),
-            recipes: recipes.into_iter().map(|v| v as i32).collect(),
+            recipes,
             order: rec.3.unwrap_or(0),
             color: rec.4.clone(),
             color_light: rec.5.clone(),
@@ -223,7 +223,7 @@ async fn update_category_recipes(
 
     // Verify user has access to all recipes (owner, editor, or viewer)
     if !payload.recipe_ids.is_empty() {
-        let r_ids: Vec<i64> = payload.recipe_ids.iter().map(|id| i64::from(*id)).collect();
+        let r_ids: Vec<i64> = payload.recipe_ids.to_vec();
 
         let count = diesel::sql_query(
             r"
@@ -258,7 +258,7 @@ async fn update_category_recipes(
         diesel::insert_into(user_category_recipes::table)
             .values((
                 user_category_recipes::category_id.eq(c_id),
-                user_category_recipes::recipe_id.eq(i64::from(*r_id)),
+                user_category_recipes::recipe_id.eq(*r_id),
                 user_category_recipes::position.eq(i as i32),
             ))
             .execute(&mut conn)
@@ -279,7 +279,7 @@ async fn reorder_categories(
     let mut data = Vec::with_capacity(payload.category_ids.len());
 
     for (i, cat_id) in payload.category_ids.iter().enumerate() {
-        let c_id = i64::from(*cat_id);
+        let c_id = *cat_id;
         let order = i as i32;
 
         let res = diesel::update(user_categories::table)
@@ -321,10 +321,10 @@ async fn fetch_category(conn: &mut AsyncPgConnection, id: i64) -> Result<Categor
         .await?;
 
     Ok(Category {
-        id: rec.0 as i32,
-        user: rec.1 as i32,
+        id: rec.0,
+        user: rec.1,
         name: rec.2.clone(),
-        recipes: recipes.into_iter().map(|v| v as i32).collect(),
+        recipes,
         order: rec.3.unwrap_or(0),
         color: rec.4.clone(),
         color_light: rec.5.clone(),

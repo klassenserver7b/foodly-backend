@@ -198,10 +198,10 @@ async fn get_recipe(
     let sections = helpers::fetch_sections(r_id, &mut conn).await?;
 
     let recipe = Recipe {
-        id: id as i32,
-        owner: owner_id as i32,
-        editors: editors.into_iter().map(|v| v as i32).collect(),
-        viewers: viewers.into_iter().map(|v| v as i32).collect(),
+        id,
+        owner: owner_id,
+        editors,
+        viewers,
         name,
         tags,
         source,
@@ -247,7 +247,7 @@ async fn create_recipe(
                     recipes::size_number.eq(payload.size_number),
                     recipes::size_text.eq(payload.size_text.clone()),
                     recipes::notes.eq(payload.notes.clone()),
-                    recipes::main_image_id.eq(payload.main_image.map(i64::from)),
+                    recipes::main_image_id.eq(payload.main_image),
                 ))
                 .returning(recipes::id)
                 .get_result(conn)
@@ -662,15 +662,15 @@ async fn fetch_recipes(
             updated_at,
         ) = rec;
 
-        let rec_editors: Vec<i32> = editors
+        let rec_editors: Vec<i64> = editors
             .iter()
             .filter(|(rid, _)| *rid == id)
-            .map(|(_, uid)| *uid as i32)
+            .map(|(_, uid)| *uid)
             .collect();
-        let rec_viewers: Vec<i32> = viewers
+        let rec_viewers: Vec<i64> = viewers
             .iter()
             .filter(|(rid, _)| *rid == id)
-            .map(|(_, uid)| *uid as i32)
+            .map(|(_, uid)| *uid)
             .collect();
         let rec_tags: Vec<String> = tags
             .iter()
@@ -688,8 +688,8 @@ async fn fetch_recipes(
         };
 
         data.push(RecipePreview {
-            id: id as i32,
-            owner: owner_id as i32,
+            id,
+            owner: owner_id,
             editors: rec_editors,
             viewers: rec_viewers,
             name,
