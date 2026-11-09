@@ -1169,3 +1169,37 @@ async fn test_categories_order_rejects_too_many_ids() {
         "over-cap payload must be rejected with a clear message"
     );
 }
+
+#[tokio::test]
+async fn test_update_category_recipes_rejects_too_many_ids() {
+    let app = app(test_state().await);
+    let (token, _) = register_test_user(&app, "Test User", "test@example.com", "password123").await;
+
+    let cat = create_test_category(&app, &token, "Breakfast").await;
+    let cat_id = cat["id"].as_i64().unwrap();
+
+    // 501 distinct ids — one more than MAX_RECIPE_IDS
+    let too_many: Vec<i64> = (1..=501).collect();
+    let payload = serde_json::json!({ "recipeIds": too_many });
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri(format!("/api/v1/categories/{}/recipes", cat_id))
+                .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(serde_json::to_vec(&payload).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(
+        json["error"]["message"], "recipeIds accepts at most 500 entries",
+        "over-cap payload must be rejected with a clear message"
+    );
+}

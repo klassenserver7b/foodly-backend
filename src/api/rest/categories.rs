@@ -197,13 +197,25 @@ async fn delete_category(
     Ok(axum::http::StatusCode::NO_CONTENT)
 }
 
+/// Upper bound on the recipe IDs accepted in one update request. The
+/// handler issues one INSERT per recipe, so an unbounded list would let
+/// a single request monopolize a DB connection.
+const MAX_RECIPE_IDS: usize = 500;
+
 async fn update_category_recipes(
     State(state): State<AppState>,
     Extension(user_id): Extension<i64>,
     Path(id): Path<i32>,
     Json(payload): Json<UpdateCategoryRecipes>,
 ) -> Result<Json<Category>, AppError> {
+    if payload.recipe_ids.len() > MAX_RECIPE_IDS {
+        return Err(AppError::Unprocessable(format!(
+            "recipeIds accepts at most {MAX_RECIPE_IDS} entries"
+        )));
+    }
+
     let c_id = i64::from(id);
+
     let u_id = user_id;
     let mut conn = state.pool.get().await?;
 
