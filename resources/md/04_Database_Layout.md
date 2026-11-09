@@ -198,7 +198,7 @@ CREATE INDEX idx_recipe_viewers_user ON recipe_viewers(user_id);
 
 > The index on `user_id` is critical: the `GET /api/v1/recipes` endpoint queries "all recipes where user is owner OR editor OR viewer", which requires efficient lookup by user across all three roles.
 
-> `added_at` records when the user was added as editor/viewer. It powers the recipe's `myAccessSince` field (owner → `recipes.created_at`) and the optional `sort.field = "access_since"`.
+> `added_at` records when the user was added as editor/viewer. It powers the recipe's `myAccessSince` field (owner → `recipes.created_at`) and the optional `sort.field = "accessSince"`.
 
 ---
 

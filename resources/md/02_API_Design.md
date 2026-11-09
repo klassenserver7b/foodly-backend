@@ -331,7 +331,7 @@ Search and list recipes accessible to the authenticated user (owned + shared as 
     "shareStates": ["private", "shared", "collaborative"]
   },
   "sort": {
-    "field": "rating", // "name", "work_time", "total_time", "rating", "access_since"
+    "field": "rating", // "name", "work_time", "total_time", "rating", "accessSince"
     "order": "desc"    // "asc", "desc"
   }
 }
@@ -371,7 +371,7 @@ Search and list recipes accessible to the authenticated user (owned + shared as 
 
 > **Scope:** The backend **only returns recipes where the user is `owner`, `editor`, or `viewer`**. The frontend does not need to filter by access itself. The `cursor` in the response represents the next page number as a string, or `null` if there are no more pages.
 
-> **`myAccessSince`:** when the *requesting* user gained access to the recipe. For the `owner` it equals `createdAt`; for an `editor`/`viewer` it is the join-table `added_at` timestamp (editor wins if a user appears in both lists). Use it for "recently shared with you" ordering; `sort.field = "access_since"` orders by the same value.
+> **`myAccessSince`:** when the *requesting* user gained access to the recipe. For the `owner` it equals `createdAt`; for an `editor`/`viewer` it is the join-table `added_at` timestamp (editor wins if a user appears in both lists). Use it for "recently shared with you" ordering; `sort.field = "accessSince"` orders by the same value.
 
 ---
 
