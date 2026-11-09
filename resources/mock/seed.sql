@@ -3,11 +3,19 @@
 -- `password123`. Because the pepper is server-specific (generated on
 -- first run and stored in .env), seed.sql must NOT hardcode hashes.
 -- The `{{PASSWORD_HASH}}` placeholder is substituted by `cargo run --bin seed`.
-INSERT INTO users (id, name, email, password_hash) OVERRIDING SYSTEM VALUE VALUES
-    (1, 'Mock User', 'user1@example.com', '{{PASSWORD_HASH}}'),
-    (2, 'User 2', 'user2@example.com', '{{PASSWORD_HASH}}'),
-    (3, 'User 3', 'user3@example.com', '{{PASSWORD_HASH}}')
-ON CONFLICT (id) DO NOTHING;
+-- Seeded users get identity-generated ids: a real account may already own one
+-- of these emails (under any id), so explicit ids could collide with either
+-- the primary key or the email unique constraint. Email is the stable key;
+-- every later reference to a seeded user resolves it by email below.
+INSERT INTO users (name, email, password_hash) VALUES
+    ('Mock User', 'user1@example.com', '{{PASSWORD_HASH}}'),
+    ('User 2', 'user2@example.com', '{{PASSWORD_HASH}}'),
+    ('User 3', 'user3@example.com', '{{PASSWORD_HASH}}')
+ON CONFLICT (email) DO NOTHING;
+-- With no explicit ids above the sequence is already correct; setting it
+-- anyway guarantees a manually inserted row with a higher id is never
+-- handed out twice.
+SELECT setval(pg_get_serial_sequence('users', 'id'), (SELECT MAX(id) FROM users));
 INSERT INTO tags (id) VALUES ('Hauptgericht') ON CONFLICT DO NOTHING;
 INSERT INTO tags (id) VALUES ('Italienisch') ON CONFLICT DO NOTHING;
 INSERT INTO tags (id) VALUES ('Vegetarisch') ON CONFLICT DO NOTHING;
@@ -92,8 +100,8 @@ INSERT INTO images (id, hash, name) OVERRIDING SYSTEM VALUE VALUES (8, 'hash_8',
 INSERT INTO images (id, hash, name) OVERRIDING SYSTEM VALUE VALUES (9, 'hash_9', 'mock.jpg') ON CONFLICT DO NOTHING;
 INSERT INTO images (id, hash, name) OVERRIDING SYSTEM VALUE VALUES (10, 'hash_10', 'mock.jpg') ON CONFLICT DO NOTHING;
 SELECT setval(pg_get_serial_sequence('images', 'id'), (SELECT MAX(id) FROM images) + 1);
-INSERT INTO recipes (id, owner_id, name, source, time_display, work_minutes, overall_minutes, size_number, size_text, notes, main_image_id) OVERRIDING SYSTEM VALUE VALUES (1, 1, 'Spaghetti {Vegan} Bolognese', 'Omas Rezept', '20 min + {Vegan} {Kochzeit} 25 min', 20, 45, 4, '{Vegan} {Portionen}', ARRAY['Schmeckt am nächsten {Vegan} Tag aufgewärmt noch besser. {WIP}']::TEXT[], 1) ON CONFLICT DO NOTHING;
-INSERT INTO recipe_editors (recipe_id, user_id) VALUES (1, 2) ON CONFLICT DO NOTHING;
+INSERT INTO recipes (id, owner_id, name, source, time_display, work_minutes, overall_minutes, size_number, size_text, notes, main_image_id) OVERRIDING SYSTEM VALUE VALUES (1, (SELECT id FROM users WHERE email = 'user1@example.com'), 'Spaghetti {Vegan} Bolognese', 'Omas Rezept', '20 min + {Vegan} {Kochzeit} 25 min', 20, 45, 4, '{Vegan} {Portionen}', ARRAY['Schmeckt am nächsten {Vegan} Tag aufgewärmt noch besser. {WIP}']::TEXT[], 1) ON CONFLICT DO NOTHING;
+INSERT INTO recipe_editors (recipe_id, user_id) VALUES (1, (SELECT id FROM users WHERE email = 'user2@example.com')) ON CONFLICT DO NOTHING;
 INSERT INTO recipe_tags (recipe_id, tag_id, position) VALUES (1, 'Hauptgericht', 0) ON CONFLICT DO NOTHING;
 INSERT INTO recipe_tags (recipe_id, tag_id, position) VALUES (1, 'Italienisch', 1) ON CONFLICT DO NOTHING;
 INSERT INTO recipe_tags (recipe_id, tag_id, position) VALUES (1, 'Vegan', 2) ON CONFLICT DO NOTHING;
@@ -123,9 +131,9 @@ INSERT INTO steps (section_id, text, position) VALUES (2, 'Spaghetti nach Packun
 INSERT INTO steps (section_id, text, position) VALUES (2, 'Mit der Soße und frisch geriebenem Parmesan servieren.', 1) ON CONFLICT DO NOTHING;
 INSERT INTO recipe_ingredients (section_id, ingredient_id, text, amount, amount_prefix, unit, position) VALUES (2, 1, NULL, '500', NULL, 'g', 0);
 INSERT INTO recipe_ingredients (section_id, ingredient_id, text, amount, amount_prefix, unit, position) VALUES (2, 8, 'zum Servieren', NULL, NULL, NULL, 1);
-INSERT INTO recipes (id, owner_id, name, source, time_display, work_minutes, overall_minutes, size_number, size_text, notes, main_image_id) OVERRIDING SYSTEM VALUE VALUES (2, 1, 'Saftiger Schokokuchen', 'https://example.com/schokokuchen', '25 min inkl. {Backzeit} 45 min', 25, 70, NULL, '26 cm {Springform}', ARRAY[]::TEXT[], 2) ON CONFLICT DO NOTHING;
-INSERT INTO recipe_viewers (recipe_id, user_id) VALUES (2, 2) ON CONFLICT DO NOTHING;
-INSERT INTO recipe_viewers (recipe_id, user_id) VALUES (2, 3) ON CONFLICT DO NOTHING;
+INSERT INTO recipes (id, owner_id, name, source, time_display, work_minutes, overall_minutes, size_number, size_text, notes, main_image_id) OVERRIDING SYSTEM VALUE VALUES (2, (SELECT id FROM users WHERE email = 'user1@example.com'), 'Saftiger Schokokuchen', 'https://example.com/schokokuchen', '25 min inkl. {Backzeit} 45 min', 25, 70, NULL, '26 cm {Springform}', ARRAY[]::TEXT[], 2) ON CONFLICT DO NOTHING;
+INSERT INTO recipe_viewers (recipe_id, user_id) VALUES (2, (SELECT id FROM users WHERE email = 'user2@example.com')) ON CONFLICT DO NOTHING;
+INSERT INTO recipe_viewers (recipe_id, user_id) VALUES (2, (SELECT id FROM users WHERE email = 'user3@example.com')) ON CONFLICT DO NOTHING;
 INSERT INTO recipe_tags (recipe_id, tag_id, position) VALUES (2, 'Backen', 0) ON CONFLICT DO NOTHING;
 INSERT INTO recipe_tags (recipe_id, tag_id, position) VALUES (2, 'Dessert', 1) ON CONFLICT DO NOTHING;
 INSERT INTO recipe_images (recipe_id, image_id, position) VALUES (2, 3, 0) ON CONFLICT DO NOTHING;
@@ -146,8 +154,8 @@ INSERT INTO recipe_ingredients (section_id, ingredient_id, text, amount, amount_
 INSERT INTO recipe_ingredients (section_id, ingredient_id, text, amount, amount_prefix, unit, position) VALUES (3, 15, NULL, '1', NULL, 'TL', 4);
 INSERT INTO recipe_ingredients (section_id, ingredient_id, text, amount, amount_prefix, unit, position) VALUES (3, 16, NULL, '200', NULL, 'g', 5);
 INSERT INTO recipe_ingredients (section_id, ingredient_id, text, amount, amount_prefix, unit, position) VALUES (3, 14, NULL, '100', NULL, 'ml', 6);
-INSERT INTO recipes (id, owner_id, name, source, time_display, work_minutes, overall_minutes, size_number, size_text, notes, main_image_id) OVERRIDING SYSTEM VALUE VALUES (3, 2, 'Pfannkuchen', NULL, '25 min', 10, 25, 4, '{Portionen}', ARRAY['Geht auch herzhaft mit Käse und Schinken.']::TEXT[], NULL) ON CONFLICT DO NOTHING;
-INSERT INTO recipe_viewers (recipe_id, user_id) VALUES (3, 1) ON CONFLICT DO NOTHING;
+INSERT INTO recipes (id, owner_id, name, source, time_display, work_minutes, overall_minutes, size_number, size_text, notes, main_image_id) OVERRIDING SYSTEM VALUE VALUES (3, (SELECT id FROM users WHERE email = 'user2@example.com'), 'Pfannkuchen', NULL, '25 min', 10, 25, 4, '{Portionen}', ARRAY['Geht auch herzhaft mit Käse und Schinken.']::TEXT[], NULL) ON CONFLICT DO NOTHING;
+INSERT INTO recipe_viewers (recipe_id, user_id) VALUES (3, (SELECT id FROM users WHERE email = 'user1@example.com')) ON CONFLICT DO NOTHING;
 INSERT INTO recipe_tags (recipe_id, tag_id, position) VALUES (3, 'Vegetarisch', 0) ON CONFLICT DO NOTHING;
 INSERT INTO recipe_tags (recipe_id, tag_id, position) VALUES (3, 'Schnell', 1) ON CONFLICT DO NOTHING;
 INSERT INTO sections (id, recipe_id, name, position) OVERRIDING SYSTEM VALUE VALUES (4, 3, NULL, 0) ON CONFLICT DO NOTHING;
@@ -159,7 +167,7 @@ INSERT INTO recipe_ingredients (section_id, ingredient_id, text, amount, amount_
 INSERT INTO recipe_ingredients (section_id, ingredient_id, text, amount, amount_prefix, unit, position) VALUES (4, 13, NULL, '3', NULL, NULL, 2);
 INSERT INTO recipe_ingredients (section_id, ingredient_id, text, amount, amount_prefix, unit, position) VALUES (4, 17, NULL, '1', NULL, 'Prise', 3);
 INSERT INTO recipe_ingredients (section_id, ingredient_id, text, amount, amount_prefix, unit, position) VALUES (4, 12, 'zum Braten', NULL, NULL, NULL, 4);
-INSERT INTO recipes (id, owner_id, name, source, time_display, work_minutes, overall_minutes, size_number, size_text, notes, main_image_id) OVERRIDING SYSTEM VALUE VALUES (4, 1, 'Ofengemüse', NULL, NULL, 15, 40, 2, '{Portionen}', ARRAY['100 % pflanzlich {Vegan}']::TEXT[], NULL) ON CONFLICT DO NOTHING;
+INSERT INTO recipes (id, owner_id, name, source, time_display, work_minutes, overall_minutes, size_number, size_text, notes, main_image_id) OVERRIDING SYSTEM VALUE VALUES (4, (SELECT id FROM users WHERE email = 'user1@example.com'), 'Ofengemüse', NULL, NULL, 15, 40, 2, '{Portionen}', ARRAY['100 % pflanzlich {Vegan}']::TEXT[], NULL) ON CONFLICT DO NOTHING;
 INSERT INTO recipe_tags (recipe_id, tag_id, position) VALUES (4, 'Vegetarisch', 0) ON CONFLICT DO NOTHING;
 INSERT INTO recipe_tags (recipe_id, tag_id, position) VALUES (4, 'Vegan', 1) ON CONFLICT DO NOTHING;
 INSERT INTO sections (id, recipe_id, name, position) OVERRIDING SYSTEM VALUE VALUES (5, 4, NULL, 0) ON CONFLICT DO NOTHING;
@@ -170,7 +178,7 @@ INSERT INTO recipe_ingredients (section_id, ingredient_id, text, amount, amount_
 INSERT INTO recipe_ingredients (section_id, ingredient_id, text, amount, amount_prefix, unit, position) VALUES (5, 19, NULL, '2', NULL, NULL, 1);
 INSERT INTO recipe_ingredients (section_id, ingredient_id, text, amount, amount_prefix, unit, position) VALUES (5, 6, 'zum Beträufeln', NULL, NULL, NULL, 2);
 INSERT INTO recipe_ingredients (section_id, ingredient_id, text, amount, amount_prefix, unit, position) VALUES (5, 17, 'nach Geschmack', NULL, NULL, NULL, 3);
-INSERT INTO recipes (id, owner_id, name, source, time_display, work_minutes, overall_minutes, size_number, size_text, notes, main_image_id) OVERRIDING SYSTEM VALUE VALUES (5, 1, 'Griechischer Bauernsalat', NULL, '20 min', 20, 20, 4, '{Portionen}', ARRAY['Am besten 10 Minuten ziehen lassen, bevor du ihn servierst.']::TEXT[], NULL) ON CONFLICT DO NOTHING;
+INSERT INTO recipes (id, owner_id, name, source, time_display, work_minutes, overall_minutes, size_number, size_text, notes, main_image_id) OVERRIDING SYSTEM VALUE VALUES (5, (SELECT id FROM users WHERE email = 'user1@example.com'), 'Griechischer Bauernsalat', NULL, '20 min', 20, 20, 4, '{Portionen}', ARRAY['Am besten 10 Minuten ziehen lassen, bevor du ihn servierst.']::TEXT[], NULL) ON CONFLICT DO NOTHING;
 INSERT INTO recipe_tags (recipe_id, tag_id, position) VALUES (5, 'Salat', 0) ON CONFLICT DO NOTHING;
 INSERT INTO recipe_tags (recipe_id, tag_id, position) VALUES (5, 'Vegetarisch', 1) ON CONFLICT DO NOTHING;
 INSERT INTO recipe_tags (recipe_id, tag_id, position) VALUES (5, 'Schnell', 2) ON CONFLICT DO NOTHING;
@@ -189,8 +197,8 @@ INSERT INTO recipe_ingredients (section_id, ingredient_id, text, amount, amount_
 INSERT INTO recipe_ingredients (section_id, ingredient_id, text, amount, amount_prefix, unit, position) VALUES (6, 6, NULL, '4', NULL, 'EL', 6);
 INSERT INTO recipe_ingredients (section_id, ingredient_id, text, amount, amount_prefix, unit, position) VALUES (6, 25, 'getrocknet', '1', NULL, 'TL', 7);
 INSERT INTO recipe_ingredients (section_id, ingredient_id, text, amount, amount_prefix, unit, position) VALUES (6, 17, 'nach Geschmack', NULL, NULL, NULL, 8);
-INSERT INTO recipes (id, owner_id, name, source, time_display, work_minutes, overall_minutes, size_number, size_text, notes, main_image_id) OVERRIDING SYSTEM VALUE VALUES (6, 1, 'Kürbissuppe', NULL, '15 min + {Kochzeit} 25 min', 15, 40, 4, '{Portionen}', ARRAY['Mit einem Klecks Kokosmilch und gerösteten Kürbiskernen anrichten.']::TEXT[], NULL) ON CONFLICT DO NOTHING;
-INSERT INTO recipe_viewers (recipe_id, user_id) VALUES (6, 2) ON CONFLICT DO NOTHING;
+INSERT INTO recipes (id, owner_id, name, source, time_display, work_minutes, overall_minutes, size_number, size_text, notes, main_image_id) OVERRIDING SYSTEM VALUE VALUES (6, (SELECT id FROM users WHERE email = 'user1@example.com'), 'Kürbissuppe', NULL, '15 min + {Kochzeit} 25 min', 15, 40, 4, '{Portionen}', ARRAY['Mit einem Klecks Kokosmilch und gerösteten Kürbiskernen anrichten.']::TEXT[], NULL) ON CONFLICT DO NOTHING;
+INSERT INTO recipe_viewers (recipe_id, user_id) VALUES (6, (SELECT id FROM users WHERE email = 'user2@example.com')) ON CONFLICT DO NOTHING;
 INSERT INTO recipe_tags (recipe_id, tag_id, position) VALUES (6, 'Suppe', 0) ON CONFLICT DO NOTHING;
 INSERT INTO recipe_tags (recipe_id, tag_id, position) VALUES (6, 'Vegetarisch', 1) ON CONFLICT DO NOTHING;
 INSERT INTO recipe_tags (recipe_id, tag_id, position) VALUES (6, 'Vegan', 2) ON CONFLICT DO NOTHING;
@@ -210,8 +218,8 @@ INSERT INTO recipe_ingredients (section_id, ingredient_id, text, amount, amount_
 INSERT INTO recipe_ingredients (section_id, ingredient_id, text, amount, amount_prefix, unit, position) VALUES (7, 29, NULL, '200', NULL, 'ml', 6);
 INSERT INTO recipe_ingredients (section_id, ingredient_id, text, amount, amount_prefix, unit, position) VALUES (7, 6, NULL, '2', NULL, 'EL', 7);
 INSERT INTO recipe_ingredients (section_id, ingredient_id, text, amount, amount_prefix, unit, position) VALUES (7, 17, 'nach Geschmack', NULL, NULL, NULL, 8);
-INSERT INTO recipes (id, owner_id, name, source, time_display, work_minutes, overall_minutes, size_number, size_text, notes, main_image_id) OVERRIDING SYSTEM VALUE VALUES (7, 2, 'Hähnchen-Curry mit Reis', NULL, '20 min + {Kochzeit} 20 min', 20, 40, 4, '{Portionen}', ARRAY[]::TEXT[], NULL) ON CONFLICT DO NOTHING;
-INSERT INTO recipe_viewers (recipe_id, user_id) VALUES (7, 1) ON CONFLICT DO NOTHING;
+INSERT INTO recipes (id, owner_id, name, source, time_display, work_minutes, overall_minutes, size_number, size_text, notes, main_image_id) OVERRIDING SYSTEM VALUE VALUES (7, (SELECT id FROM users WHERE email = 'user2@example.com'), 'Hähnchen-Curry mit Reis', NULL, '20 min + {Kochzeit} 20 min', 20, 40, 4, '{Portionen}', ARRAY[]::TEXT[], NULL) ON CONFLICT DO NOTHING;
+INSERT INTO recipe_viewers (recipe_id, user_id) VALUES (7, (SELECT id FROM users WHERE email = 'user1@example.com')) ON CONFLICT DO NOTHING;
 INSERT INTO recipe_tags (recipe_id, tag_id, position) VALUES (7, 'Hauptgericht', 0) ON CONFLICT DO NOTHING;
 INSERT INTO recipe_tags (recipe_id, tag_id, position) VALUES (7, 'Indisch', 1) ON CONFLICT DO NOTHING;
 INSERT INTO sections (id, recipe_id, name, position) OVERRIDING SYSTEM VALUE VALUES (8, 7, 'Curry', 0) ON CONFLICT DO NOTHING;
@@ -235,8 +243,8 @@ INSERT INTO steps (section_id, text, position) VALUES (9, 'Reis gründlich kalt 
 INSERT INTO steps (section_id, text, position) VALUES (9, 'In der doppelten Menge Salzwasser nach Packungsangabe garen.', 1) ON CONFLICT DO NOTHING;
 INSERT INTO recipe_ingredients (section_id, ingredient_id, text, amount, amount_prefix, unit, position) VALUES (9, 33, NULL, '300', NULL, 'g', 0);
 INSERT INTO recipe_ingredients (section_id, ingredient_id, text, amount, amount_prefix, unit, position) VALUES (9, 17, NULL, '1', NULL, 'TL', 1);
-INSERT INTO recipes (id, owner_id, name, source, time_display, work_minutes, overall_minutes, size_number, size_text, notes, main_image_id) OVERRIDING SYSTEM VALUE VALUES (8, 1, 'Guacamole', NULL, '15 min', 15, 15, 4, '{Portionen}', ARRAY['Den Kern in die fertige Guacamole legen — so bleibt sie länger grün.']::TEXT[], NULL) ON CONFLICT DO NOTHING;
-INSERT INTO recipe_editors (recipe_id, user_id) VALUES (8, 3) ON CONFLICT DO NOTHING;
+INSERT INTO recipes (id, owner_id, name, source, time_display, work_minutes, overall_minutes, size_number, size_text, notes, main_image_id) OVERRIDING SYSTEM VALUE VALUES (8, (SELECT id FROM users WHERE email = 'user1@example.com'), 'Guacamole', NULL, '15 min', 15, 15, 4, '{Portionen}', ARRAY['Den Kern in die fertige Guacamole legen — so bleibt sie länger grün.']::TEXT[], NULL) ON CONFLICT DO NOTHING;
+INSERT INTO recipe_editors (recipe_id, user_id) VALUES (8, (SELECT id FROM users WHERE email = 'user3@example.com')) ON CONFLICT DO NOTHING;
 INSERT INTO recipe_tags (recipe_id, tag_id, position) VALUES (8, 'Vorspeise', 0) ON CONFLICT DO NOTHING;
 INSERT INTO recipe_tags (recipe_id, tag_id, position) VALUES (8, 'Vegan', 1) ON CONFLICT DO NOTHING;
 INSERT INTO recipe_tags (recipe_id, tag_id, position) VALUES (8, 'Mexikanisch', 2) ON CONFLICT DO NOTHING;
@@ -253,8 +261,8 @@ INSERT INTO recipe_ingredients (section_id, ingredient_id, text, amount, amount_
 INSERT INTO recipe_ingredients (section_id, ingredient_id, text, amount, amount_prefix, unit, position) VALUES (10, 5, NULL, '1', NULL, NULL, 4);
 INSERT INTO recipe_ingredients (section_id, ingredient_id, text, amount, amount_prefix, unit, position) VALUES (10, 36, 'frisch, gehackt', '2', NULL, 'EL', 5);
 INSERT INTO recipe_ingredients (section_id, ingredient_id, text, amount, amount_prefix, unit, position) VALUES (10, 17, 'nach Geschmack', NULL, NULL, NULL, 6);
-INSERT INTO recipes (id, owner_id, name, source, time_display, work_minutes, overall_minutes, size_number, size_text, notes, main_image_id) OVERRIDING SYSTEM VALUE VALUES (9, 3, 'American Pancakes', 'https://example.com/pancakes', '15 min', 15, 25, 12, '{Stück}', ARRAY['Der Teig gelingt am besten, wenn er vor dem Backen kurz ruht.']::TEXT[], NULL) ON CONFLICT DO NOTHING;
-INSERT INTO recipe_viewers (recipe_id, user_id) VALUES (9, 1) ON CONFLICT DO NOTHING;
+INSERT INTO recipes (id, owner_id, name, source, time_display, work_minutes, overall_minutes, size_number, size_text, notes, main_image_id) OVERRIDING SYSTEM VALUE VALUES (9, (SELECT id FROM users WHERE email = 'user3@example.com'), 'American Pancakes', 'https://example.com/pancakes', '15 min', 15, 25, 12, '{Stück}', ARRAY['Der Teig gelingt am besten, wenn er vor dem Backen kurz ruht.']::TEXT[], NULL) ON CONFLICT DO NOTHING;
+INSERT INTO recipe_viewers (recipe_id, user_id) VALUES (9, (SELECT id FROM users WHERE email = 'user1@example.com')) ON CONFLICT DO NOTHING;
 INSERT INTO recipe_tags (recipe_id, tag_id, position) VALUES (9, 'Frühstück', 0) ON CONFLICT DO NOTHING;
 INSERT INTO recipe_tags (recipe_id, tag_id, position) VALUES (9, 'Backen', 1) ON CONFLICT DO NOTHING;
 INSERT INTO recipe_tags (recipe_id, tag_id, position) VALUES (9, 'Schnell', 2) ON CONFLICT DO NOTHING;
@@ -272,7 +280,7 @@ INSERT INTO recipe_ingredients (section_id, ingredient_id, text, amount, amount_
 INSERT INTO recipe_ingredients (section_id, ingredient_id, text, amount, amount_prefix, unit, position) VALUES (11, 14, NULL, '300', NULL, 'ml', 5);
 INSERT INTO recipe_ingredients (section_id, ingredient_id, text, amount, amount_prefix, unit, position) VALUES (11, 12, 'geschmolzen', '30', NULL, 'g', 6);
 INSERT INTO recipe_ingredients (section_id, ingredient_id, text, amount, amount_prefix, unit, position) VALUES (11, 37, 'zum Servieren', NULL, NULL, NULL, 7);
-INSERT INTO recipes (id, owner_id, name, source, time_display, work_minutes, overall_minutes, size_number, size_text, notes, main_image_id) OVERRIDING SYSTEM VALUE VALUES (10, 1, 'Caesar Salad', NULL, '25 min', 25, 25, 2, '{Portionen}', ARRAY[]::TEXT[], NULL) ON CONFLICT DO NOTHING;
+INSERT INTO recipes (id, owner_id, name, source, time_display, work_minutes, overall_minutes, size_number, size_text, notes, main_image_id) OVERRIDING SYSTEM VALUE VALUES (10, (SELECT id FROM users WHERE email = 'user1@example.com'), 'Caesar Salad', NULL, '25 min', 25, 25, 2, '{Portionen}', ARRAY[]::TEXT[], NULL) ON CONFLICT DO NOTHING;
 INSERT INTO recipe_tags (recipe_id, tag_id, position) VALUES (10, 'Salat', 0) ON CONFLICT DO NOTHING;
 INSERT INTO recipe_tags (recipe_id, tag_id, position) VALUES (10, 'Hauptgericht', 1) ON CONFLICT DO NOTHING;
 INSERT INTO sections (id, recipe_id, name, position) OVERRIDING SYSTEM VALUE VALUES (12, 10, 'Salat', 0) ON CONFLICT DO NOTHING;
@@ -293,8 +301,8 @@ INSERT INTO recipe_ingredients (section_id, ingredient_id, text, amount, amount_
 INSERT INTO recipe_ingredients (section_id, ingredient_id, text, amount, amount_prefix, unit, position) VALUES (13, 42, NULL, '1', NULL, 'TL', 3);
 INSERT INTO recipe_ingredients (section_id, ingredient_id, text, amount, amount_prefix, unit, position) VALUES (13, 8, 'gerieben', '20', NULL, 'g', 4);
 INSERT INTO recipe_ingredients (section_id, ingredient_id, text, amount, amount_prefix, unit, position) VALUES (13, 6, NULL, '2', NULL, 'EL', 5);
-INSERT INTO recipes (id, owner_id, name, source, time_display, work_minutes, overall_minutes, size_number, size_text, notes, main_image_id) OVERRIDING SYSTEM VALUE VALUES (11, 2, 'Rindergulasch', 'Familienrezept', '30 min + {Kochzeit} 120 min', 30, 150, 6, '{Portionen}', ARRAY['Je länger das Gulasch schmort, desto zarter wird das Fleisch.','Schmeckt aufgewärmt am nächsten Tag noch besser.']::TEXT[], NULL) ON CONFLICT DO NOTHING;
-INSERT INTO recipe_editors (recipe_id, user_id) VALUES (11, 1) ON CONFLICT DO NOTHING;
+INSERT INTO recipes (id, owner_id, name, source, time_display, work_minutes, overall_minutes, size_number, size_text, notes, main_image_id) OVERRIDING SYSTEM VALUE VALUES (11, (SELECT id FROM users WHERE email = 'user2@example.com'), 'Rindergulasch', 'Familienrezept', '30 min + {Kochzeit} 120 min', 30, 150, 6, '{Portionen}', ARRAY['Je länger das Gulasch schmort, desto zarter wird das Fleisch.','Schmeckt aufgewärmt am nächsten Tag noch besser.']::TEXT[], NULL) ON CONFLICT DO NOTHING;
+INSERT INTO recipe_editors (recipe_id, user_id) VALUES (11, (SELECT id FROM users WHERE email = 'user1@example.com')) ON CONFLICT DO NOTHING;
 INSERT INTO recipe_tags (recipe_id, tag_id, position) VALUES (11, 'Hauptgericht', 0) ON CONFLICT DO NOTHING;
 INSERT INTO sections (id, recipe_id, name, position) OVERRIDING SYSTEM VALUE VALUES (14, 11, NULL, 0) ON CONFLICT DO NOTHING;
 INSERT INTO steps (section_id, text, position) VALUES (14, 'Fleisch trocken tupfen und in Würfel schneiden.', 0) ON CONFLICT DO NOTHING;
@@ -313,7 +321,7 @@ INSERT INTO recipe_ingredients (section_id, ingredient_id, text, amount, amount_
 INSERT INTO recipe_ingredients (section_id, ingredient_id, text, amount, amount_prefix, unit, position) VALUES (14, 45, NULL, '500', NULL, 'ml', 6);
 INSERT INTO recipe_ingredients (section_id, ingredient_id, text, amount, amount_prefix, unit, position) VALUES (14, 6, NULL, '3', NULL, 'EL', 7);
 INSERT INTO recipe_ingredients (section_id, ingredient_id, text, amount, amount_prefix, unit, position) VALUES (14, 17, 'nach Geschmack', NULL, NULL, NULL, 8);
-INSERT INTO recipes (id, owner_id, name, source, time_display, work_minutes, overall_minutes, size_number, size_text, notes, main_image_id) OVERRIDING SYSTEM VALUE VALUES (12, 1, 'Cremige Tomatensuppe', NULL, '10 min + {Kochzeit} 20 min', 10, 30, 4, '{Portionen}', ARRAY['Mit frischem Basilikum und einem Schuss Olivenöl servieren.']::TEXT[], NULL) ON CONFLICT DO NOTHING;
+INSERT INTO recipes (id, owner_id, name, source, time_display, work_minutes, overall_minutes, size_number, size_text, notes, main_image_id) OVERRIDING SYSTEM VALUE VALUES (12, (SELECT id FROM users WHERE email = 'user1@example.com'), 'Cremige Tomatensuppe', NULL, '10 min + {Kochzeit} 20 min', 10, 30, 4, '{Portionen}', ARRAY['Mit frischem Basilikum und einem Schuss Olivenöl servieren.']::TEXT[], NULL) ON CONFLICT DO NOTHING;
 INSERT INTO recipe_tags (recipe_id, tag_id, position) VALUES (12, 'Suppe', 0) ON CONFLICT DO NOTHING;
 INSERT INTO recipe_tags (recipe_id, tag_id, position) VALUES (12, 'Vegetarisch', 1) ON CONFLICT DO NOTHING;
 INSERT INTO recipe_tags (recipe_id, tag_id, position) VALUES (12, 'Schnell', 2) ON CONFLICT DO NOTHING;
@@ -333,9 +341,9 @@ INSERT INTO recipe_ingredients (section_id, ingredient_id, text, amount, amount_
 INSERT INTO recipe_ingredients (section_id, ingredient_id, text, amount, amount_prefix, unit, position) VALUES (15, 11, NULL, '1', NULL, 'Prise', 7);
 INSERT INTO recipe_ingredients (section_id, ingredient_id, text, amount, amount_prefix, unit, position) VALUES (15, 9, 'frisch', NULL, NULL, NULL, 8);
 INSERT INTO recipe_ingredients (section_id, ingredient_id, text, amount, amount_prefix, unit, position) VALUES (15, 17, 'nach Geschmack', NULL, NULL, NULL, 9);
-INSERT INTO recipes (id, owner_id, name, source, time_display, work_minutes, overall_minutes, size_number, size_text, notes, main_image_id) OVERRIDING SYSTEM VALUE VALUES (13, 1, 'Gedeckter Apfelkuchen', 'https://example.com/apfelkuchen', '40 min + {Backzeit} 50 min', 40, 90, NULL, '26 cm {Springform}', ARRAY['Vor dem Anschneiden vollständig auskühlen lassen.']::TEXT[], NULL) ON CONFLICT DO NOTHING;
-INSERT INTO recipe_viewers (recipe_id, user_id) VALUES (13, 2) ON CONFLICT DO NOTHING;
-INSERT INTO recipe_viewers (recipe_id, user_id) VALUES (13, 3) ON CONFLICT DO NOTHING;
+INSERT INTO recipes (id, owner_id, name, source, time_display, work_minutes, overall_minutes, size_number, size_text, notes, main_image_id) OVERRIDING SYSTEM VALUE VALUES (13, (SELECT id FROM users WHERE email = 'user1@example.com'), 'Gedeckter Apfelkuchen', 'https://example.com/apfelkuchen', '40 min + {Backzeit} 50 min', 40, 90, NULL, '26 cm {Springform}', ARRAY['Vor dem Anschneiden vollständig auskühlen lassen.']::TEXT[], NULL) ON CONFLICT DO NOTHING;
+INSERT INTO recipe_viewers (recipe_id, user_id) VALUES (13, (SELECT id FROM users WHERE email = 'user2@example.com')) ON CONFLICT DO NOTHING;
+INSERT INTO recipe_viewers (recipe_id, user_id) VALUES (13, (SELECT id FROM users WHERE email = 'user3@example.com')) ON CONFLICT DO NOTHING;
 INSERT INTO recipe_tags (recipe_id, tag_id, position) VALUES (13, 'Backen', 0) ON CONFLICT DO NOTHING;
 INSERT INTO recipe_tags (recipe_id, tag_id, position) VALUES (13, 'Dessert', 1) ON CONFLICT DO NOTHING;
 INSERT INTO sections (id, recipe_id, name, position) OVERRIDING SYSTEM VALUE VALUES (16, 13, 'Mürbeteig', 0) ON CONFLICT DO NOTHING;
@@ -359,9 +367,9 @@ INSERT INTO recipe_ingredients (section_id, ingredient_id, text, amount, amount_
 INSERT INTO recipe_ingredients (section_id, ingredient_id, text, amount, amount_prefix, unit, position) VALUES (17, 11, NULL, '2', NULL, 'EL', 1);
 INSERT INTO recipe_ingredients (section_id, ingredient_id, text, amount, amount_prefix, unit, position) VALUES (17, 48, NULL, '1', NULL, 'TL', 2);
 INSERT INTO recipe_ingredients (section_id, ingredient_id, text, amount, amount_prefix, unit, position) VALUES (17, 41, 'Saft einer halben Zitrone', NULL, NULL, NULL, 3);
-INSERT INTO recipes (id, owner_id, name, source, time_display, work_minutes, overall_minutes, size_number, size_text, notes, main_image_id) OVERRIDING SYSTEM VALUE VALUES (14, 3, 'Asiatische Gemüsepfanne mit Reis', NULL, '20 min', 20, 20, 3, '{Portionen}', ARRAY['Das Gemüse soll knackig bleiben — nur kurz und heiß braten.']::TEXT[], NULL) ON CONFLICT DO NOTHING;
-INSERT INTO recipe_editors (recipe_id, user_id) VALUES (14, 2) ON CONFLICT DO NOTHING;
-INSERT INTO recipe_viewers (recipe_id, user_id) VALUES (14, 1) ON CONFLICT DO NOTHING;
+INSERT INTO recipes (id, owner_id, name, source, time_display, work_minutes, overall_minutes, size_number, size_text, notes, main_image_id) OVERRIDING SYSTEM VALUE VALUES (14, (SELECT id FROM users WHERE email = 'user3@example.com'), 'Asiatische Gemüsepfanne mit Reis', NULL, '20 min', 20, 20, 3, '{Portionen}', ARRAY['Das Gemüse soll knackig bleiben — nur kurz und heiß braten.']::TEXT[], NULL) ON CONFLICT DO NOTHING;
+INSERT INTO recipe_editors (recipe_id, user_id) VALUES (14, (SELECT id FROM users WHERE email = 'user2@example.com')) ON CONFLICT DO NOTHING;
+INSERT INTO recipe_viewers (recipe_id, user_id) VALUES (14, (SELECT id FROM users WHERE email = 'user1@example.com')) ON CONFLICT DO NOTHING;
 INSERT INTO recipe_tags (recipe_id, tag_id, position) VALUES (14, 'Vegan', 0) ON CONFLICT DO NOTHING;
 INSERT INTO recipe_tags (recipe_id, tag_id, position) VALUES (14, 'Asiatisch', 1) ON CONFLICT DO NOTHING;
 INSERT INTO recipe_tags (recipe_id, tag_id, position) VALUES (14, 'Schnell', 2) ON CONFLICT DO NOTHING;
@@ -383,4 +391,3 @@ INSERT INTO recipe_ingredients (section_id, ingredient_id, text, amount, amount_
 INSERT INTO recipe_ingredients (section_id, ingredient_id, text, amount, amount_prefix, unit, position) VALUES (18, 51, NULL, '2', NULL, 'EL', 8);
 SELECT setval(pg_get_serial_sequence('recipes', 'id'), (SELECT MAX(id) FROM recipes) + 1);
 SELECT setval(pg_get_serial_sequence('sections', 'id'), (SELECT MAX(id) FROM sections) + 1);
-SELECT setval(pg_get_serial_sequence('users', 'id'), (SELECT MAX(id) FROM users) + 1);

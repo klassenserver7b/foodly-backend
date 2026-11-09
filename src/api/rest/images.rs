@@ -75,37 +75,53 @@ async fn upload_image(
         ));
     }
 
-    let hash = storage::save_image(&state.image_storage_path, &bytes).await?;
+    let hash = storage::hash_bytes(&bytes);
 
     let mut conn = state.pool.get().await?;
 
-    // Re-uploading identical bytes is idempotent: the existing row is returned
-    // and its owner is kept.
-    let image = diesel::insert_into(images::table)
-        .values((
-            images::hash.eq(&hash),
-            images::name.eq::<Option<String>>(None),
-            images::owner_id.eq(user_id),
-        ))
-        .on_conflict(images::hash)
-        .do_nothing()
-        .returning((images::id, images::hash, images::name))
-        .get_result::<(i64, String, Option<String>)>(&mut conn)
-        .await
-        .optional()?;
+    // The advisory lock serializes this write/insert with a concurrent
+    // `delete_image` of the same hash. The file is (re)written *after*
+    // acquiring the lock so a delete that removed it just before cannot
+    // leave a live row pointing at a missing file.
+    let hash_for_tx = hash.clone();
+    let storage_dir = state.image_storage_path.clone();
+    let body = bytes.clone();
+    let (image, status_code) = conn
+        .transaction::<_, AppError, _>(async move |conn| {
+            crate::db::lock_image_hash(conn, &hash_for_tx).await?;
+            storage::write_image(&storage_dir, &hash_for_tx, &body).await?;
 
-    let (image, status_code) = match image {
-        Some(image) => (image, StatusCode::CREATED),
-        None => {
-            // Hash already exists — fetch the existing row, keeping its owner
-            let image = images::table
-                .filter(images::hash.eq(&hash))
-                .select((images::id, images::hash, images::name))
-                .first::<(i64, String, Option<String>)>(&mut conn)
-                .await?;
-            (image, StatusCode::OK)
-        }
-    };
+            // Re-uploading identical bytes is idempotent: the existing row is
+            // returned and its owner is kept.
+            let image = diesel::insert_into(images::table)
+                .values((
+                    images::hash.eq(&hash_for_tx),
+                    images::name.eq::<Option<String>>(None),
+                    images::owner_id.eq(user_id),
+                ))
+                .on_conflict(images::hash)
+                .do_nothing()
+                .returning((images::id, images::hash, images::name))
+                .get_result::<(i64, String, Option<String>)>(conn)
+                .await
+                .optional()?;
+
+            let (image, status_code) = match image {
+                Some(image) => (image, StatusCode::CREATED),
+                None => {
+                    // Hash already exists — fetch the existing row, keeping its owner
+                    let image = images::table
+                        .filter(images::hash.eq(&hash_for_tx))
+                        .select((images::id, images::hash, images::name))
+                        .first::<(i64, String, Option<String>)>(conn)
+                        .await?;
+                    (image, StatusCode::OK)
+                }
+            };
+
+            Ok((image, status_code))
+        })
+        .await?;
 
     Ok((
         status_code,
@@ -189,64 +205,70 @@ async fn delete_image(
     // neither slip in a new `recipe_images` row before we re-check nor
     // resurrect a link we just cascaded away.
     let hash_for_tx = hash.clone();
-    let delete_file = conn
-        .transaction::<_, AppError, _>(async move |conn| {
-            // Find the image (must exist and be owned by the caller)
-            let image = images::table
-                .filter(images::hash.eq(&hash_for_tx))
-                .select((images::id, images::owner_id))
-                .for_update()
-                .first::<(i64, Option<i64>)>(conn)
-                .await
-                .optional()?
-                .ok_or_else(|| AppError::NotFound("Image not found".to_string()))?;
+    let storage_dir = state.image_storage_path.clone();
+    conn.transaction::<_, AppError, _>(async move |conn| {
+        // Serialize with concurrent uploads/deletes of the same hash. The
+        // file is unlinked below while this transaction still holds the lock,
+        // so a concurrent upload waits and rewrites the file afterwards
+        // instead of leaving a live row without bytes on disk.
+        crate::db::lock_image_hash(conn, &hash_for_tx).await?;
 
-            let (image_id, owner_id) = image;
+        // Find the image (must exist and be owned by the caller)
+        let image = images::table
+            .filter(images::hash.eq(&hash_for_tx))
+            .select((images::id, images::owner_id))
+            .for_update()
+            .first::<(i64, Option<i64>)>(conn)
+            .await
+            .optional()?
+            .ok_or_else(|| AppError::NotFound("Image not found".to_string()))?;
 
-            if owner_id != Some(user_id) {
-                return Err(AppError::NotFound("Image not found".to_string()));
-            }
+        let (image_id, owner_id) = image;
 
-            // Check if anyone uses this hash as their profile picture
-            let profile_pic_used: bool = diesel::select(diesel::dsl::exists(
-                users::table.filter(users::profile_picture.eq(&hash_for_tx)),
-            ))
-            .first(conn)
-            .await?;
+        if owner_id != Some(user_id) {
+            return Err(AppError::NotFound("Image not found".to_string()));
+        }
 
-            // Check if the image is referenced by any recipe (as main image or
-            // gallery image)
-            let is_referenced: bool = diesel::select(diesel::dsl::exists(
-                recipe_images::table.filter(recipe_images::image_id.eq(image_id)),
-            ))
-            .first(conn)
-            .await?;
-
-            let is_main: bool = diesel::select(diesel::dsl::exists(
-                recipes::table.filter(recipes::main_image_id.eq(image_id)),
-            ))
-            .first(conn)
-            .await?;
-
-            if profile_pic_used || is_referenced || is_main {
-                // Still referenced: keep the row (and its owner) and the file.
-                // Ownership must survive, otherwise the image can never be
-                // deleted once the last reference goes away.
-                return Ok(false);
-            }
-
-            diesel::delete(images::table)
-                .filter(images::id.eq(image_id))
-                .execute(conn)
-                .await?;
-
-            Ok(true)
-        })
+        // Check if anyone uses this hash as their profile picture
+        let profile_pic_used: bool = diesel::select(diesel::dsl::exists(
+            users::table.filter(users::profile_picture.eq(&hash_for_tx)),
+        ))
+        .first(conn)
         .await?;
 
-    if delete_file {
-        let _ = storage::delete_image(&state.image_storage_path, &hash).await;
-    }
+        // Check if the image is referenced by any recipe (as main image or
+        // gallery image)
+        let is_referenced: bool = diesel::select(diesel::dsl::exists(
+            recipe_images::table.filter(recipe_images::image_id.eq(image_id)),
+        ))
+        .first(conn)
+        .await?;
+
+        let is_main: bool = diesel::select(diesel::dsl::exists(
+            recipes::table.filter(recipes::main_image_id.eq(image_id)),
+        ))
+        .first(conn)
+        .await?;
+
+        if profile_pic_used || is_referenced || is_main {
+            // Still referenced: keep the row (and its owner) and the file.
+            // Ownership must survive, otherwise the image can never be
+            // deleted once the last reference goes away.
+            return Ok(false);
+        }
+
+        diesel::delete(images::table)
+            .filter(images::id.eq(image_id))
+            .execute(conn)
+            .await?;
+
+        // Remove the bytes while still under the lock (and before the row
+        // delete commits) so no upload can interleave.
+        let _ = storage::delete_image(&storage_dir, &hash_for_tx).await;
+
+        Ok(true)
+    })
+    .await?;
 
     Ok(StatusCode::NO_CONTENT)
 }

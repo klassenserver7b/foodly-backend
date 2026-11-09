@@ -189,11 +189,13 @@ impl TrustedProxy {
 }
 
 /// Parse a `u32` from the named env var, falling back to `default` when the
-/// var is unset or not a valid `u32`.
+/// var is unset, not a valid `u32`, or zero. A zero value would panic later
+/// in `GovernorConfigBuilder` (per-second/burst size must be positive).
 fn env_u32(name: &str, default: u32) -> u32 {
     std::env::var(name)
         .ok()
         .and_then(|raw| raw.trim().parse::<u32>().ok())
+        .filter(|value| *value > 0)
         .unwrap_or(default)
 }
 
@@ -390,6 +392,18 @@ mod tests {
             client,
             &[TrustedProxy::Ip(proxy)]
         ));
+    }
+
+    #[test]
+    fn test_env_u32_rejects_zero() {
+        const VAR: &str = "FOODLY_TEST_ENV_U32";
+        // SAFETY: unique variable name owned by this test; no other test reads it.
+        unsafe { std::env::set_var(VAR, "0") };
+        assert_eq!(env_u32(VAR, 12), 12);
+        unsafe { std::env::set_var(VAR, "7") };
+        assert_eq!(env_u32(VAR, 12), 7);
+        unsafe { std::env::remove_var(VAR) };
+        assert_eq!(env_u32(VAR, 12), 12);
     }
 
     #[test]

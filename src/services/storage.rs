@@ -2,35 +2,44 @@ use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 use tokio::fs;
 
-pub async fn save_image(storage_dir: &Path, bytes: &[u8]) -> anyhow::Result<String> {
+/// Returns the SHA-256 hex digest used as the storage key for `bytes`.
+pub fn hash_bytes(bytes: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(bytes);
-    let hash = hex::encode(hasher.finalize());
+    hex::encode(hasher.finalize())
+}
 
-    let prefix1 = &hash[0..2];
-    let prefix2 = &hash[2..4];
-
-    let target_dir = storage_dir.join(prefix1).join(prefix2);
-    fs::create_dir_all(&target_dir).await?;
-
-    let file_path = target_dir.join(&hash);
-    fs::write(&file_path, bytes).await?;
-
+/// Writes `bytes` to the location derived from their digest.
+pub async fn save_image(storage_dir: &Path, bytes: &[u8]) -> anyhow::Result<String> {
+    let hash = hash_bytes(bytes);
+    write_image(storage_dir, &hash, bytes).await?;
     Ok(hash)
 }
 
-/// Builds the on-disk path for a validated image hash.
-/// The hash MUST already be validated as exactly 64 lowercase hex
-/// characters; this function performs no filesystem checks.
+/// Writes `bytes` to the on-disk location for `hash`.
 ///
-/// # Panics
-/// Panics if `hash` is not exactly 64 ASCII hex characters. All callers
-/// must call [`validate_hash`] (or otherwise guarantee the format) first.
-pub fn get_image_path(storage_dir: &Path, hash: &str) -> PathBuf {
-    validate_hash(hash).expect("hash pre-validated by caller");
+/// `hash` must be the digest of `bytes` (see [`hash_bytes`]), e.g. for a
+/// re-write after taking the per-hash mutation lock.
+pub async fn write_image(storage_dir: &Path, hash: &str, bytes: &[u8]) -> anyhow::Result<()> {
+    let file_path = get_image_path(storage_dir, hash).map_err(anyhow::Error::msg)?;
+    if let Some(parent) = file_path.parent() {
+        fs::create_dir_all(parent).await?;
+    }
+    fs::write(&file_path, bytes).await?;
+    Ok(())
+}
+
+/// Builds the on-disk path for an image hash.
+///
+/// Returns an error for hashes that are not 64 lowercase hex characters
+/// (e.g. legacy seeded values such as `hash_1`). Callers should treat this
+/// as "not found"; it must never panic, since the hash may come straight
+/// from a database column.
+pub fn get_image_path(storage_dir: &Path, hash: &str) -> Result<PathBuf, String> {
+    validate_hash(hash)?;
     let prefix1 = &hash[0..2];
     let prefix2 = &hash[2..4];
-    storage_dir.join(prefix1).join(prefix2).join(hash)
+    Ok(storage_dir.join(prefix1).join(prefix2).join(hash))
 }
 
 /// Validates that a hash is exactly 64 lowercase ASCII hex characters
@@ -50,11 +59,30 @@ pub fn validate_hash(hash: &str) -> Result<(), String> {
 }
 
 pub async fn read_image(storage_dir: &Path, hash: &str) -> std::io::Result<Vec<u8>> {
-    let file_path = get_image_path(storage_dir, hash);
+    let file_path = get_image_path(storage_dir, hash)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e))?;
     fs::read(&file_path).await
 }
 
 pub async fn delete_image(storage_dir: &Path, hash: &str) -> std::io::Result<()> {
-    let file_path = get_image_path(storage_dir, hash);
+    let file_path = get_image_path(storage_dir, hash)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e))?;
     fs::remove_file(&file_path).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn get_image_path_rejects_legacy_seed_hashes() {
+        assert!(get_image_path(Path::new("/tmp/storage"), "hash_1").is_err());
+    }
+
+    #[test]
+    fn get_image_path_builds_prefixed_shard_path() {
+        let hash = "ab".repeat(32);
+        let path = get_image_path(Path::new("/tmp/storage"), &hash).unwrap();
+        assert_eq!(path, Path::new("/tmp/storage/ab/ab").join(&hash));
+    }
 }

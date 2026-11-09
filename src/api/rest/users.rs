@@ -147,7 +147,7 @@ async fn update_profile_picture(
         ));
     }
 
-    let hash = storage::save_image(&state.image_storage_path, &bytes).await?;
+    let hash = storage::hash_bytes(&bytes);
 
     let mut conn = state.pool.get().await?;
 
@@ -155,47 +155,55 @@ async fn update_profile_picture(
     // hash is reachable through `GET /images/:hash` too. The row and the
     // pointer must not diverge.
     let new_hash = hash.clone();
-    let old_hash = conn
-        .transaction::<_, AppError, _>(async move |conn| {
-            // Re-uploading identical bytes is idempotent: keep the existing row
-            // (and its owner) just like `upload_image` does.
-            diesel::insert_into(images::table)
-                .values((
-                    images::hash.eq(&new_hash),
-                    images::name.eq::<Option<String>>(None),
-                    images::owner_id.eq(user_id),
-                ))
-                .on_conflict(images::hash)
-                .do_nothing()
-                .execute(conn)
-                .await?;
+    let storage_dir = state.image_storage_path.clone();
+    let body = bytes.clone();
+    conn.transaction::<_, AppError, _>(async move |conn| {
+        // Serialize with every other mutation of the same hash. The bytes are
+        // (re)written after the lock so a concurrent delete cannot leave the
+        // new row pointing at a removed file.
+        crate::db::lock_image_hash(conn, &new_hash).await?;
+        storage::write_image(&storage_dir, &new_hash, &body).await?;
 
-            let old_hash: Option<String> = users::table
-                .filter(users::id.eq(user_id))
-                .select(users::profile_picture)
-                .first::<Option<String>>(conn)
-                .await?;
+        // Re-uploading identical bytes is idempotent: keep the existing row
+        // (and its owner) just like `upload_image` does.
+        diesel::insert_into(images::table)
+            .values((
+                images::hash.eq(&new_hash),
+                images::name.eq::<Option<String>>(None),
+                images::owner_id.eq(user_id),
+            ))
+            .on_conflict(images::hash)
+            .do_nothing()
+            .execute(conn)
+            .await?;
 
-            diesel::update(users::table)
-                .filter(users::id.eq(user_id))
-                .set(users::profile_picture.eq(&new_hash))
-                .execute(conn)
-                .await?;
+        let old_hash: Option<String> = users::table
+            .filter(users::id.eq(user_id))
+            .select(users::profile_picture)
+            .first::<Option<String>>(conn)
+            .await?;
 
-            Ok(old_hash)
-        })
-        .await?;
+        diesel::update(users::table)
+            .filter(users::id.eq(user_id))
+            .set(users::profile_picture.eq(&new_hash))
+            .execute(conn)
+            .await?;
 
-    // Only delete the old file if nothing still references it (another
-    // user's profile picture, a recipe image, or an `images` row)
-    if let Some(old_hash) = old_hash
-        && old_hash != hash
-    {
-        let still_referenced = is_image_still_referenced(&mut conn, &old_hash, user_id).await?;
-        if !still_referenced {
-            let _ = storage::delete_image(&state.image_storage_path, &old_hash).await;
+        // Only remove the old file if nothing still references it. The
+        // reference check and the unlink run under the old hash's lock so a
+        // concurrent upload cannot re-create the row before the file goes.
+        if let Some(old_hash) = old_hash
+            && old_hash != new_hash
+        {
+            crate::db::lock_image_hash(conn, &old_hash).await?;
+            if !is_image_still_referenced(conn, &old_hash, user_id).await? {
+                let _ = storage::delete_image(&storage_dir, &old_hash).await;
+            }
         }
-    }
+
+        Ok(())
+    })
+    .await?;
 
     Ok(Json(ProfilePictureResponse {
         profile_picture: hash,
@@ -249,26 +257,49 @@ async fn delete_profile_picture(
 ) -> Result<impl IntoResponse, AppError> {
     let mut conn = state.pool.get().await?;
 
-    // Get the current hash so we can delete the file
-    let current_hash: Option<String> = users::table
-        .filter(users::id.eq(user_id))
-        .select(users::profile_picture)
-        .first::<Option<String>>(&mut conn)
-        .await?;
+    // Clearing the pointer and deciding whether the file is still referenced
+    // must happen atomically under the hash's lock; otherwise a concurrent
+    // upload could re-create the row after our check but before the delete.
+    let storage_dir = state.image_storage_path.clone();
+    conn.transaction::<_, AppError, _>(async move |conn| {
+        let current_hash: Option<String> = users::table
+            .filter(users::id.eq(user_id))
+            .select(users::profile_picture)
+            .first::<Option<String>>(conn)
+            .await?;
 
-    diesel::update(users::table)
-        .filter(users::id.eq(user_id))
-        .set(users::profile_picture.eq::<Option<String>>(None))
-        .execute(&mut conn)
-        .await?;
+        let Some(current_hash) = current_hash else {
+            return Ok(());
+        };
 
-    // Delete the file from disk only if nothing still references it
-    if let Some(current_hash) = current_hash {
-        let still_referenced = is_image_still_referenced(&mut conn, &current_hash, user_id).await?;
-        if !still_referenced {
-            let _ = storage::delete_image(&state.image_storage_path, &current_hash).await;
+        crate::db::lock_image_hash(conn, &current_hash).await?;
+
+        // Re-read under the lock: another request may have swapped the
+        // picture while we waited, in which case it owns the cleanup.
+        let latest_hash: Option<String> = users::table
+            .filter(users::id.eq(user_id))
+            .select(users::profile_picture)
+            .first::<Option<String>>(conn)
+            .await?;
+        if latest_hash.as_deref() != Some(current_hash.as_str()) {
+            return Ok(());
         }
-    }
+
+        diesel::update(users::table)
+            .filter(users::id.eq(user_id))
+            .set(users::profile_picture.eq::<Option<String>>(None))
+            .execute(conn)
+            .await?;
+
+        // Delete the file from disk only if nothing still references it,
+        // while the lock is still held.
+        if !is_image_still_referenced(conn, &current_hash, user_id).await? {
+            let _ = storage::delete_image(&storage_dir, &current_hash).await;
+        }
+
+        Ok(())
+    })
+    .await?;
 
     Ok(StatusCode::NO_CONTENT)
 }
