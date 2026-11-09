@@ -349,6 +349,9 @@ async fn bulk_get_users(
     State(state): State<AppState>,
     Query(query): Query<UserBulkQuery>,
 ) -> Result<Json<UserSearchResponse>, AppError> {
+    // Cap at 100 ids to keep the `IN` list bounded.
+    const MAX_IDS: usize = 100;
+
     // Malformed segments are dropped silently: `ids=1,abc,3` → `[1, 3]`.
     let ids: Vec<i64> = query
         .ids
@@ -356,6 +359,7 @@ async fn bulk_get_users(
         .unwrap_or_default()
         .split(',')
         .filter_map(|segment| segment.trim().parse::<i64>().ok())
+        .take(MAX_IDS)
         .collect();
 
     if ids.is_empty() {

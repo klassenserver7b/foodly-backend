@@ -538,15 +538,19 @@ async fn fetch_recipes(
                 // Mirrors the per-row `myAccessSince` computation: owner uses
                 // the recipe's creation time, everyone else their join-table
                 // `added_at` (editor before viewer).
-                let dir = if desc { "DESC" } else { "ASC" };
-                q = q.then_order_by(diesel::dsl::sql::<diesel::sql_types::Timestamptz>(
-                    &format!(
-                        "CASE WHEN recipes.owner_id = {u_id} THEN recipes.created_at ELSE COALESCE(\
-                         (SELECT added_at FROM recipe_editors WHERE recipe_id = recipes.id AND user_id = {u_id}), \
-                         (SELECT added_at FROM recipe_viewers WHERE recipe_id = recipes.id AND user_id = {u_id}), \
-                         recipes.created_at) END {dir}"
-                    ),
-                ));
+                let expr = diesel::dsl::sql::<diesel::sql_types::Timestamptz>(
+                    "CASE WHEN recipes.owner_id = ")
+                    .bind::<diesel::sql_types::BigInt, _>(u_id)
+                    .sql(" THEN recipes.created_at ELSE COALESCE((SELECT added_at FROM recipe_editors WHERE recipe_id = recipes.id AND user_id = ")
+                    .bind::<diesel::sql_types::BigInt, _>(u_id)
+                    .sql("), (SELECT added_at FROM recipe_viewers WHERE recipe_id = recipes.id AND user_id = ")
+                    .bind::<diesel::sql_types::BigInt, _>(u_id)
+                    .sql("), recipes.created_at) END");
+                if desc {
+                    q = q.then_order_by(expr.desc());
+                } else {
+                    q = q.then_order_by(expr.asc());
+                }
             }
             _ => {
                 q = q.then_order_by(recipes::id.asc());
