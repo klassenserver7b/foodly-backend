@@ -10,7 +10,7 @@ use axum::{
     routing::{delete, post},
 };
 use diesel::prelude::*;
-use diesel_async::RunQueryDsl;
+use diesel_async::{AsyncConnection, RunQueryDsl};
 
 use crate::{
     AppState,
@@ -64,40 +64,51 @@ async fn register(
     let hashed = hash_password(&payload.password)
         .map_err(|e| AppError::Internal(anyhow::anyhow!("hash: {e}")))?;
 
+    let name = payload.name.trim().to_string();
+    let email = payload.email.trim().to_string();
+
     let mut conn = state.pool.get().await?;
 
     // No pre-check: the CITEXT UNIQUE index on email enforces this.
     // A case-variant duplicate (e.g. USER@ vs user@) hits the same
     // unique index, so both paths return the same 409 "Duplicate value"
     // from the UniqueViolation mapping in error.rs.
+    //
+    // The user row and its initial refresh token are committed together:
+    // a failed token insert must not leave behind an account the client
+    // was told about but can no longer authenticate with.
+    let (inserted, access, refresh) = conn
+        .transaction::<_, AppError, _>(async move |conn| {
+            let inserted: (i64, String, String, Option<String>) = diesel::insert_into(users::table)
+                .values((
+                    users::name.eq(name),
+                    users::email.eq(email),
+                    users::password_hash.eq(hashed),
+                    users::profile_picture.eq(Option::<String>::None),
+                ))
+                .returning((users::id, users::name, users::email, users::profile_picture))
+                .get_result(conn)
+                .await?;
 
-    let inserted: (i64, String, String, Option<String>) = diesel::insert_into(users::table)
-        .values((
-            users::name.eq(payload.name.trim()),
-            users::email.eq(payload.email.trim()),
-            users::password_hash.eq(hashed),
-            users::profile_picture.eq(Option::<String>::None),
-        ))
-        .returning((users::id, users::name, users::email, users::profile_picture))
-        .get_result(&mut conn)
-        .await?;
+            let secret = jwt_secret();
+            let access = create_access_token(inserted.0, secret, jwt_expiry_minutes())?;
+            let refresh = generate_refresh_token();
 
-    // Issue tokens
-    let secret = jwt_secret();
-    let access = create_access_token(inserted.0, secret, jwt_expiry_minutes())?;
-    let refresh = generate_refresh_token();
+            let refresh_hash = hash_token(&refresh);
+            let expires_at =
+                chrono::Utc::now() + chrono::Duration::days(refresh_token_expiry_days());
+            diesel::insert_into(refresh_tokens::table)
+                .values((
+                    refresh_tokens::user_id.eq(inserted.0),
+                    refresh_tokens::token_hash.eq(&refresh_hash),
+                    refresh_tokens::expires_at.eq(expires_at.naive_utc()),
+                    refresh_tokens::created_at.eq(chrono::Utc::now().naive_utc()),
+                ))
+                .execute(conn)
+                .await?;
 
-    // Store refresh token hash
-    let refresh_hash = hash_token(&refresh);
-    let expires_at = chrono::Utc::now() + chrono::Duration::days(refresh_token_expiry_days());
-    diesel::insert_into(refresh_tokens::table)
-        .values((
-            refresh_tokens::user_id.eq(inserted.0),
-            refresh_tokens::token_hash.eq(&refresh_hash),
-            refresh_tokens::expires_at.eq(expires_at.naive_utc()),
-            refresh_tokens::created_at.eq(chrono::Utc::now().naive_utc()),
-        ))
-        .execute(&mut conn)
+            Ok((inserted, access, refresh))
+        })
         .await?;
 
     let user = crate::models::user::User {
@@ -125,14 +136,20 @@ async fn login(
 ) -> Result<Json<UserWithTokens>, AppError> {
     let mut conn = state.pool.get().await?;
 
-    let user: Option<(i64, String, String, String)> = users::table
+    let user: Option<(i64, String, String, Option<String>, String)> = users::table
         .filter(users::columns::email.eq(payload.email.trim()))
-        .select((users::id, users::name, users::email, users::password_hash))
-        .first::<(i64, String, String, String)>(&mut conn)
+        .select((
+            users::id,
+            users::name,
+            users::email,
+            users::profile_picture,
+            users::password_hash,
+        ))
+        .first::<(i64, String, String, Option<String>, String)>(&mut conn)
         .await
         .optional()?;
 
-    let Some((id, name, email, password_hash)) = user else {
+    let Some((id, name, email, profile_picture, password_hash)) = user else {
         // User not found — verify against dummy hash for timing equalization
         let _ = verify_password(&payload.password, DUMMY_HASH);
         return Err(AppError::Unauthorized("invalid credentials".into()));
@@ -163,7 +180,7 @@ async fn login(
         id,
         name,
         email,
-        profile_picture: None,
+        profile_picture,
     };
 
     Ok(Json(UserWithTokens {
@@ -184,38 +201,48 @@ async fn refresh(
     let token_hash = hash_token(&payload.refresh_token);
     let now = chrono::Utc::now();
 
-    // Atomic rotation: DELETE ... RETURNING in a single statement.
-    // A concurrent refresh with the same token sees zero rows and 401s.
-    let stored: Option<(i64, chrono::NaiveDateTime)> = diesel::delete(refresh_tokens::table)
-        .filter(refresh_tokens::token_hash.eq(&token_hash))
-        .returning((refresh_tokens::user_id, refresh_tokens::expires_at))
-        .get_result(&mut conn)
-        .await
-        .optional()?;
+    // Rotation must be all-or-nothing: DELETE ... RETURNING consumes the old
+    // token, and a failed replacement INSERT would otherwise force the client
+    // to log in again on a transient error.
+    let (access, new_refresh) = conn
+        .transaction::<_, AppError, _>(async move |conn| {
+            // Atomic rotation: DELETE ... RETURNING in a single statement.
+            // A concurrent refresh with the same token sees zero rows and 401s.
+            let stored: Option<(i64, chrono::NaiveDateTime)> =
+                diesel::delete(refresh_tokens::table)
+                    .filter(refresh_tokens::token_hash.eq(&token_hash))
+                    .returning((refresh_tokens::user_id, refresh_tokens::expires_at))
+                    .get_result(conn)
+                    .await
+                    .optional()?;
 
-    let Some((user_id, expires_at)) = stored else {
-        return Err(AppError::Unauthorized("invalid refresh token".into()));
-    };
+            let Some((user_id, expires_at)) = stored else {
+                return Err(AppError::Unauthorized("invalid refresh token".into()));
+            };
 
-    if expires_at < now.naive_utc() {
-        return Err(AppError::Unauthorized("invalid refresh token".into()));
-    }
+            if expires_at < now.naive_utc() {
+                return Err(AppError::Unauthorized("invalid refresh token".into()));
+            }
 
-    let secret = jwt_secret();
-    let access = create_access_token(user_id, secret, jwt_expiry_minutes())?;
-    let new_refresh = generate_refresh_token();
+            let secret = jwt_secret();
+            let access = create_access_token(user_id, secret, jwt_expiry_minutes())?;
+            let new_refresh = generate_refresh_token();
 
-    // Insert new refresh token
-    let new_hash = hash_token(&new_refresh);
-    let new_expires = chrono::Utc::now() + chrono::Duration::days(refresh_token_expiry_days());
-    diesel::insert_into(refresh_tokens::table)
-        .values((
-            refresh_tokens::user_id.eq(user_id),
-            refresh_tokens::token_hash.eq(&new_hash),
-            refresh_tokens::expires_at.eq(new_expires.naive_utc()),
-            refresh_tokens::created_at.eq(chrono::Utc::now().naive_utc()),
-        ))
-        .execute(&mut conn)
+            let new_hash = hash_token(&new_refresh);
+            let new_expires =
+                chrono::Utc::now() + chrono::Duration::days(refresh_token_expiry_days());
+            diesel::insert_into(refresh_tokens::table)
+                .values((
+                    refresh_tokens::user_id.eq(user_id),
+                    refresh_tokens::token_hash.eq(&new_hash),
+                    refresh_tokens::expires_at.eq(new_expires.naive_utc()),
+                    refresh_tokens::created_at.eq(chrono::Utc::now().naive_utc()),
+                ))
+                .execute(conn)
+                .await?;
+
+            Ok((access, new_refresh))
+        })
         .await?;
 
     Ok(Json(TokenPairResponse {

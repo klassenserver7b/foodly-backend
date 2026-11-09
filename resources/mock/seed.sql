@@ -7,7 +7,7 @@ INSERT INTO users (id, name, email, password_hash) OVERRIDING SYSTEM VALUE VALUE
     (1, 'Mock User', 'user1@example.com', '{{PASSWORD_HASH}}'),
     (2, 'User 2', 'user2@example.com', '{{PASSWORD_HASH}}'),
     (3, 'User 3', 'user3@example.com', '{{PASSWORD_HASH}}')
-ON CONFLICT (id) DO UPDATE SET password_hash = EXCLUDED.password_hash;
+ON CONFLICT (id) DO NOTHING;
 INSERT INTO tags (id) VALUES ('Hauptgericht') ON CONFLICT DO NOTHING;
 INSERT INTO tags (id) VALUES ('Italienisch') ON CONFLICT DO NOTHING;
 INSERT INTO tags (id) VALUES ('Vegetarisch') ON CONFLICT DO NOTHING;

@@ -217,6 +217,8 @@ Update the authenticated user's profile fields. Only provided fields are updated
 
 Upload or replace the user's profile picture. Body is the raw image binary (`Content-Type: image/jpeg`, `image/png`, or `image/webp`).
 
+The upload is also registered in the `images` table (`owner_id` = the user), so the picture is retrievable through `GET /api/v1/images/:hash` as well.
+
 **Response `200 OK`:**
 ```json
 {
@@ -853,6 +855,8 @@ Delete an image by its content hash from both the database and the server's disk
 
 **Requires authentication** and the caller must be the uploader (owner). Non-owners receive `404` — the existence of someone else's image is never revealed (`404` rather than `403` is intentional).
 
+If the image is still referenced (a user's profile picture, a recipe main image, or a recipe gallery image), the image is kept: the row (including `owner_id`), the file, and the references stay untouched, so the owner can retry the delete once the last reference is gone.
+
 **Response `204 No Content`**
 
 **Errors:**
@@ -976,6 +980,8 @@ server → client (event):    { type: string, payload?: unknown }   // no id
 | `JWT_EXPIRY_MINUTES`    | `15`                        | Access-token lifetime in minutes. Refresh tokens rotate on use.             |
 | `REFRESH_TOKEN_EXPIRY_DAYS` | `30`                    | Refresh-token lifetime in days.                                            |
 | `RATE_LIMIT_MODE`       | `direct`                    | `direct` \| `proxy` \| `disabled` — see below.                              |
+| `RATE_LIMIT_PER_SECOND` | `12`                        | Replenish interval in seconds per rate-limit slot (u32).                     |
+| `RATE_LIMIT_BURST_SIZE` | `5`                         | Maximum burst of requests before throttling (u32).                           |
 | `TRUSTED_PROXIES`       | *(empty)*                   | Comma-separated proxy IPs/CIDRs trusted in `proxy` mode.                    |
 | `CORS_ALLOWED_ORIGINS`  | `http://localhost:5173`     | Comma-separated allowed browser origins.                                    |
 | `IMAGE_STORAGE_PATH`    | *(app default)*             | Root directory for content-addressed image files.                           |
@@ -984,7 +990,8 @@ server → client (event):    { type: string, payload?: unknown }   // no id
 ### Rate limiting topology (`RATE_LIMIT_MODE`)
 
 The auth endpoints (`register`, `login`, `refresh`) are rate limited per client IP
-(5/min sustained, burst 5). How the client IP is resolved depends on deployment:
+(default 5/min sustained, burst 5; tunable via `RATE_LIMIT_PER_SECOND` and
+`RATE_LIMIT_BURST_SIZE`). How the client IP is resolved depends on deployment:
 
 - **`direct`** — the API is exposed directly. Only the TCP peer IP is used;
   `X-Forwarded-For` / `X-Real-IP` are ignored so a client cannot spoof a fresh

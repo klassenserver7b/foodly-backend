@@ -11,14 +11,20 @@ use foodly_backend::secrets::bootstrap_secrets;
 use foodly_backend::services::auth::hash_password;
 use foodly_backend::test_secrets::SEED_PASSWORD;
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
+fn main() -> anyhow::Result<()> {
     // Load .env so PASSWORD_PEPPER / JWT_SECRET are available
     dotenvy::dotenv().ok();
 
-    // Bootstrap secrets if missing (same logic as main.rs)
+    // Bootstrap secrets if missing (same logic as main.rs). This mutates the
+    // process environment via `std::env::set_var`, which is unsafe to race with
+    // other threads, so it must run before the Tokio runtime spawns workers.
     bootstrap_secrets();
 
+    let runtime = tokio::runtime::Runtime::new()?;
+    runtime.block_on(seed())
+}
+
+async fn seed() -> anyhow::Result<()> {
     let pool = db::init_pool().await?;
 
     // Hash the seed password with the current pepper

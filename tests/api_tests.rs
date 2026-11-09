@@ -21,34 +21,37 @@ use tower::ServiceExt; // for `oneshot`
 
 static DB_COUNTER: AtomicU32 = AtomicU32::new(0);
 
+/// Guards the one-time process-wide env mutation so parallel `#[tokio::test]`
+/// cases can't race each other while writing the environment.
+static ENV_SETUP: std::sync::Once = std::sync::Once::new();
+
 /// Create an isolated test database (with migrations applied) and return a
 /// pool connected to it. Requires a reachable PostgreSQL at the base URL.
 async fn test_pool() -> DbPool {
-    // Disable rate limiting for tests — oneshot() requests lack the
-    // ConnectInfo<SocketAddr> extension the governor key extractor needs.
-    // SAFETY: single-threaded test setup before concurrent handlers run.
-    unsafe {
-        std::env::set_var("RATE_LIMIT_MODE", "disabled");
-    }
-    // Ensure a JWT secret is set for auth endpoint tests. This is a
-    // deterministic test secret, not a production secret.
-    // SAFETY: Safe because we're in single-threaded test setup before
-    // any test handlers run concurrently.
-    if std::env::var("JWT_SECRET").is_err() {
+    ENV_SETUP.call_once(|| {
+        // Disable rate limiting for tests — oneshot() requests lack the
+        // ConnectInfo<SocketAddr> extension the governor key extractor needs.
+        // SAFETY: this runs exactly once before any test body uses the env,
+        // guarded by `ENV_SETUP`.
         unsafe {
-            std::env::set_var("JWT_SECRET", "foodly-test-jwt-secret-0123456789abcdef");
+            std::env::set_var("RATE_LIMIT_MODE", "disabled");
         }
-    }
-    // Ensure a pepper is set for auth endpoint tests. This is a
-    // deterministic test pepper, not a production pepper.
-    // SAFETY: Safe because we're in single-threaded test setup before
-    // any test handlers run concurrently.
-    if std::env::var("PASSWORD_PEPPER").is_err() {
-        unsafe {
-            std::env::set_var("PASSWORD_PEPPER", "foodly-test-pepper-0123456789abcdef");
+        // Ensure a JWT secret is set for auth endpoint tests. This is a
+        // deterministic test secret, not a production secret.
+        if std::env::var("JWT_SECRET").is_err() {
+            unsafe {
+                std::env::set_var("JWT_SECRET", "foodly-test-jwt-secret-0123456789abcdef");
+            }
         }
-    }
-    let _ = dotenvy::dotenv();
+        // Ensure a pepper is set for auth endpoint tests. This is a
+        // deterministic test pepper, not a production pepper.
+        if std::env::var("PASSWORD_PEPPER").is_err() {
+            unsafe {
+                std::env::set_var("PASSWORD_PEPPER", "foodly-test-pepper-0123456789abcdef");
+            }
+        }
+        let _ = dotenvy::dotenv();
+    });
     let base = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
         let user = std::env::var("POSTGRES_USER").unwrap_or_else(|_| "postgres".to_string());
         let password =

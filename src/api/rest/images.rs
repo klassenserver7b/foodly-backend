@@ -9,7 +9,7 @@ use axum::{
     routing::{delete, get, post},
 };
 use diesel::prelude::*;
-use diesel_async::RunQueryDsl;
+use diesel_async::{AsyncConnection, RunQueryDsl};
 
 use tower_governor::GovernorLayer;
 use tower_governor::governor::GovernorConfigBuilder;
@@ -183,59 +183,70 @@ async fn delete_image(
 
     let mut conn = state.pool.get().await?;
 
-    // Find the image (must exist and be owned by the caller)
-    let image = images::table
-        .filter(images::hash.eq(&hash))
-        .select((images::id, images::owner_id))
-        .first::<(i64, Option<i64>)>(&mut conn)
-        .await
-        .optional()?
-        .ok_or_else(|| AppError::NotFound("Image not found".to_string()))?;
+    // The reference checks and the delete must be one atomic decision:
+    // a concurrent recipe insert taking a foreign-key lock on this row
+    // waits for us (FOR UPDATE conflicts with FOR KEY SHARE), so it can
+    // neither slip in a new `recipe_images` row before we re-check nor
+    // resurrect a link we just cascaded away.
+    let hash_for_tx = hash.clone();
+    let delete_file = conn
+        .transaction::<_, AppError, _>(async move |conn| {
+            // Find the image (must exist and be owned by the caller)
+            let image = images::table
+                .filter(images::hash.eq(&hash_for_tx))
+                .select((images::id, images::owner_id))
+                .for_update()
+                .first::<(i64, Option<i64>)>(conn)
+                .await
+                .optional()?
+                .ok_or_else(|| AppError::NotFound("Image not found".to_string()))?;
 
-    let (image_id, owner_id) = image;
+            let (image_id, owner_id) = image;
 
-    if owner_id != Some(user_id) {
-        return Err(AppError::NotFound("Image not found".to_string()));
-    }
+            if owner_id != Some(user_id) {
+                return Err(AppError::NotFound("Image not found".to_string()));
+            }
 
-    // Check if anyone uses this hash as their profile picture
-    let profile_pic_used: bool = diesel::select(diesel::dsl::exists(
-        users::table.filter(users::profile_picture.eq(&hash)),
-    ))
-    .first(&mut conn)
-    .await?;
-
-    // Check if the image is referenced by any recipe (as main image or gallery image)
-    let is_referenced: bool = diesel::select(diesel::dsl::exists(
-        recipe_images::table.filter(recipe_images::image_id.eq(image_id)),
-    ))
-    .first(&mut conn)
-    .await?;
-
-    let is_main: bool = diesel::select(diesel::dsl::exists(
-        recipes::table.filter(recipes::main_image_id.eq(image_id)),
-    ))
-    .first(&mut conn)
-    .await?;
-
-    if profile_pic_used || is_referenced || is_main {
-        // Image is still referenced: orphan it (remove ownership, keep the file)
-        diesel::update(images::table)
-            .filter(images::id.eq(image_id))
-            .set(images::owner_id.eq::<Option<i64>>(None))
-            .execute(&mut conn)
+            // Check if anyone uses this hash as their profile picture
+            let profile_pic_used: bool = diesel::select(diesel::dsl::exists(
+                users::table.filter(users::profile_picture.eq(&hash_for_tx)),
+            ))
+            .first(conn)
             .await?;
-        // Return 204 — the caller no longer owns the image, but the file stays
-        // on disk for the recipes that reference it
-        return Ok(StatusCode::NO_CONTENT);
-    }
 
-    // Not referenced: delete the row and the file
-    diesel::delete(images::table)
-        .filter(images::id.eq(image_id))
-        .execute(&mut conn)
+            // Check if the image is referenced by any recipe (as main image or
+            // gallery image)
+            let is_referenced: bool = diesel::select(diesel::dsl::exists(
+                recipe_images::table.filter(recipe_images::image_id.eq(image_id)),
+            ))
+            .first(conn)
+            .await?;
+
+            let is_main: bool = diesel::select(diesel::dsl::exists(
+                recipes::table.filter(recipes::main_image_id.eq(image_id)),
+            ))
+            .first(conn)
+            .await?;
+
+            if profile_pic_used || is_referenced || is_main {
+                // Still referenced: keep the row (and its owner) and the file.
+                // Ownership must survive, otherwise the image can never be
+                // deleted once the last reference goes away.
+                return Ok(false);
+            }
+
+            diesel::delete(images::table)
+                .filter(images::id.eq(image_id))
+                .execute(conn)
+                .await?;
+
+            Ok(true)
+        })
         .await?;
-    let _ = storage::delete_image(&state.image_storage_path, &hash).await;
+
+    if delete_file {
+        let _ = storage::delete_image(&state.image_storage_path, &hash).await;
+    }
 
     Ok(StatusCode::NO_CONTENT)
 }

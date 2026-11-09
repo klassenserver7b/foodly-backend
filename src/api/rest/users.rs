@@ -17,9 +17,9 @@ use crate::{
     services::storage,
 };
 use diesel::prelude::*;
-use diesel_async::{AsyncPgConnection, RunQueryDsl};
+use diesel_async::{AsyncConnection, AsyncPgConnection, RunQueryDsl};
 
-use crate::schema::{images, recipe_images, recipes, users};
+use crate::schema::{images, users};
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -151,21 +151,43 @@ async fn update_profile_picture(
 
     let mut conn = state.pool.get().await?;
 
-    // Get old hash so we can delete the old file
-    let old_hash: Option<String> = users::table
-        .filter(users::id.eq(user_id))
-        .select(users::profile_picture)
-        .first::<Option<String>>(&mut conn)
-        .await?;
+    // Insert the `images` row alongside the profile-picture update so the
+    // hash is reachable through `GET /images/:hash` too. The row and the
+    // pointer must not diverge.
+    let new_hash = hash.clone();
+    let old_hash = conn
+        .transaction::<_, AppError, _>(async move |conn| {
+            // Re-uploading identical bytes is idempotent: keep the existing row
+            // (and its owner) just like `upload_image` does.
+            diesel::insert_into(images::table)
+                .values((
+                    images::hash.eq(&new_hash),
+                    images::name.eq::<Option<String>>(None),
+                    images::owner_id.eq(user_id),
+                ))
+                .on_conflict(images::hash)
+                .do_nothing()
+                .execute(conn)
+                .await?;
 
-    diesel::update(users::table)
-        .filter(users::id.eq(user_id))
-        .set(users::profile_picture.eq(hash.clone()))
-        .execute(&mut conn)
+            let old_hash: Option<String> = users::table
+                .filter(users::id.eq(user_id))
+                .select(users::profile_picture)
+                .first::<Option<String>>(conn)
+                .await?;
+
+            diesel::update(users::table)
+                .filter(users::id.eq(user_id))
+                .set(users::profile_picture.eq(&new_hash))
+                .execute(conn)
+                .await?;
+
+            Ok(old_hash)
+        })
         .await?;
 
     // Only delete the old file if nothing still references it (another
-    // user's profile picture, or a recipe image)
+    // user's profile picture, a recipe image, or an `images` row)
     if let Some(old_hash) = old_hash
         && old_hash != hash
     {
@@ -182,6 +204,8 @@ async fn update_profile_picture(
 
 /// Check whether the image file for `hash` is still referenced by anyone:
 /// - as another user's profile picture
+/// - by a row in `images` (which `GET /images/:hash` serves, and which recipe
+///   images/main images point at)
 /// - as a recipe gallery image (`recipe_images.image_id` → `images.id`)
 /// - as a recipe main image (`recipes.main_image_id` → `images.id`)
 ///
@@ -203,33 +227,17 @@ async fn is_image_still_referenced(
         return Ok(true);
     }
 
-    // The image is used as a recipe gallery image: recipe_images.image_id
-    // references images.id, so find the images row for this hash and check
-    // whether any recipe still references it
-    let image_id: Option<i64> = images::table
-        .filter(images::hash.eq(hash))
-        .select(images::id)
-        .first::<i64>(conn)
-        .await
-        .optional()?;
-    if let Some(image_id) = image_id {
-        let gallery_used: bool = diesel::select(diesel::dsl::exists(
-            recipe_images::table.filter(recipe_images::image_id.eq(image_id)),
-        ))
-        .first(conn)
-        .await?;
-        if gallery_used {
-            return Ok(true);
-        }
-
-        let main_used: bool = diesel::select(diesel::dsl::exists(
-            recipes::table.filter(recipes::main_image_id.eq(image_id)),
-        ))
-        .first(conn)
-        .await?;
-        if main_used {
-            return Ok(true);
-        }
+    // An `images` row is itself a live reference: the file stays reachable via
+    // `GET /images/:hash`, and recipe gallery/main image links point at this
+    // row (`ON DELETE` on `recipe_images.image_id` is CASCADE). Deleting the
+    // file here would leave the row unreadable.
+    let image_exists: bool = diesel::select(diesel::dsl::exists(
+        images::table.filter(images::hash.eq(hash)),
+    ))
+    .first(conn)
+    .await?;
+    if image_exists {
+        return Ok(true);
     }
 
     Ok(false)

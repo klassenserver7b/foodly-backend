@@ -38,6 +38,11 @@ pub mod test_secrets;
 ///   own proxy added, immune to client-supplied leftmost spoofing), then
 ///   `X-Real-IP`, then the direct peer as last resort.
 /// - `Disabled` — reverse proxy handles rate limiting, none on our side.
+///
+/// The rate-limit budget itself is tunable via env vars (when not
+/// `Disabled`): `RATE_LIMIT_PER_SECOND` (default `12`) is the replenish
+/// interval in seconds per slot, and `RATE_LIMIT_BURST_SIZE` (default `5`)
+/// is the maximum burst. Invalid/unset values fall back to the defaults.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RateLimitMode {
     Direct,
@@ -183,6 +188,15 @@ impl TrustedProxy {
     }
 }
 
+/// Parse a `u32` from the named env var, falling back to `default` when the
+/// var is unset or not a valid `u32`.
+fn env_u32(name: &str, default: u32) -> u32 {
+    std::env::var(name)
+        .ok()
+        .and_then(|raw| raw.trim().parse::<u32>().ok())
+        .unwrap_or(default)
+}
+
 /// Returns the list of trusted reverse-proxy entries from the
 /// `TRUSTED_PROXIES` env var (comma-separated). Empty/unset ⇒ none.
 fn trusted_proxies() -> Vec<TrustedProxy> {
@@ -257,10 +271,12 @@ pub fn app(state: AppState) -> Router {
     let governor_enabled = mode != RateLimitMode::Disabled;
 
     let public = if governor_enabled {
+        let per_second = env_u32("RATE_LIMIT_PER_SECOND", 12);
+        let burst_size = env_u32("RATE_LIMIT_BURST_SIZE", 5);
         let governor_conf = Arc::new(
             GovernorConfigBuilder::default()
-                .per_second(12) // 1 slot per 12s = 5/min sustained
-                .burst_size(5) // burst of 5
+                .per_second(u64::from(per_second)) // default: 1 slot per 12s = 5/min sustained
+                .burst_size(burst_size) // default: burst of 5
                 .key_extractor(SecureClientIpKeyExtractor { mode })
                 .finish()
                 .unwrap(),
