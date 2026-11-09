@@ -7,12 +7,13 @@
 use std::sync::OnceLock;
 
 use argon2::{
-    Argon2,
-    password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString, rand_core::OsRng},
+    Argon2, PasswordHash,
+    password_hash::{PasswordHasher, PasswordVerifier},
 };
 use chrono::{Duration, Utc};
 use jsonwebtoken::{Algorithm, DecodingKey, EncodingKey, Header, Validation, decode, encode};
-use rand::RngCore;
+use rand::rngs::SysRng;
+use rand::{RngExt, TryRng, rng};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -34,12 +35,11 @@ static JWT_SECRET: OnceLock<String> = OnceLock::new();
 pub fn jwt_secret() -> &'static str {
     JWT_SECRET.get_or_init(|| {
         let secret = std::env::var("JWT_SECRET").unwrap_or_default();
-        if secret.len() < 32 {
-            panic!(
-                "JWT_SECRET must be set to at least 32 characters \
-                 (generate one with `openssl rand -hex 32`)"
-            );
-        }
+        assert!(
+            secret.len() >= 32,
+            "JWT_SECRET must be set to at least 32 characters \
+             (generate one with `openssl rand -hex 32`)"
+        );
         secret
     })
 }
@@ -55,9 +55,10 @@ static PASSWORD_PEPPER: OnceLock<String> = OnceLock::new();
 pub fn password_pepper() -> &'static str {
     PASSWORD_PEPPER.get_or_init(|| {
         let pepper = std::env::var("PASSWORD_PEPPER").unwrap_or_default();
-        if pepper.is_empty() {
-            panic!("PASSWORD_PEPPER must be set (generate one with `openssl rand -hex 32`)");
-        }
+        assert!(
+            !pepper.is_empty(),
+            "PASSWORD_PEPPER must be set (generate one with `openssl rand -hex 32`)"
+        );
         pepper
     })
 }
@@ -71,11 +72,10 @@ pub fn hash_password(password: &str) -> anyhow::Result<String> {
     let pepper = password_pepper();
     let peppered = format!("{pepper}{password}");
 
-    let salt = SaltString::generate(&mut OsRng);
     let argon2 = Argon2::default();
 
     let hash = argon2
-        .hash_password(peppered.as_bytes(), &salt)
+        .hash_password(peppered.as_bytes())
         .map_err(|e| anyhow::anyhow!("hash failed: {e}"))?
         .to_string();
 
@@ -96,13 +96,17 @@ pub fn verify_password(password: &str, hash: &str) -> anyhow::Result<bool> {
 }
 
 /// Generate a random refresh token (32 bytes, hex-encoded).
+#[must_use]
 pub fn generate_refresh_token() -> String {
     let mut bytes = [0u8; 32];
-    OsRng.fill_bytes(&mut bytes);
+    if SysRng.try_fill_bytes(&mut bytes).is_err() {
+        rng().fill(&mut bytes);
+    }
     hex::encode(bytes)
 }
 
 /// Hash a refresh token with SHA-256 for storage.
+#[must_use]
 pub fn hash_token(token: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(token.as_bytes());
@@ -111,6 +115,7 @@ pub fn hash_token(token: &str) -> String {
 
 /// Returns the configured access-token lifetime in minutes
 /// (`JWT_EXPIRY_MINUTES` env var, default 15).
+#[must_use]
 pub fn jwt_expiry_minutes() -> i64 {
     std::env::var("JWT_EXPIRY_MINUTES")
         .ok()
@@ -120,6 +125,7 @@ pub fn jwt_expiry_minutes() -> i64 {
 
 /// Returns the configured refresh-token lifetime in days
 /// (`REFRESH_TOKEN_EXPIRY_DAYS` env var, default 30).
+#[must_use]
 pub fn refresh_token_expiry_days() -> i64 {
     std::env::var("REFRESH_TOKEN_EXPIRY_DAYS")
         .ok()
@@ -149,7 +155,7 @@ pub fn create_access_token(
     .map_err(|e| anyhow::anyhow!("sign: {e}"))
 }
 
-/// Verify a JWT access token and return the user_id from the `sub` claim.
+/// Verify a JWT access token and return the `user_id` from the `sub` claim.
 pub fn verify_access_token(token: &str, secret: &str) -> anyhow::Result<i64> {
     let mut validation = Validation::new(Algorithm::HS256);
     validation.leeway = 60;

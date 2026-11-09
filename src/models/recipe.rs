@@ -150,13 +150,12 @@ pub struct CreateRecipeIngredient {
 }
 
 impl CreateRecipeIngredient {
+    #[must_use]
     pub fn is_valid(&self) -> bool {
         self.ingredient.is_some() || {
-            if let Some(text) = &self.text {
-                !text.trim().is_empty()
-            } else {
-                false
-            }
+            self.text
+                .as_ref()
+                .is_some_and(|text| !text.trim().is_empty())
         }
     }
 }
@@ -208,21 +207,21 @@ pub struct RecipeFilters {
     pub share_states: Option<Vec<RecipeShareState>>,
 }
 
-#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RecipeSort {
     pub field: String,
     pub order: Order,
 }
 
-#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum RecipeAccessRights {
     Owner,
     Editor,
     Viewer,
 }
-#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum RecipeShareState {
     Private,
@@ -230,7 +229,7 @@ pub enum RecipeShareState {
     Collaborative,
 }
 
-#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum Order {
     Asc,

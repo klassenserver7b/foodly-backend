@@ -10,7 +10,7 @@ pub struct Tag {
 
 #[derive(Serialize)]
 pub struct Ingredient {
-    pub id: i32,
+    pub id: i64,
     pub name: String,
 }
 

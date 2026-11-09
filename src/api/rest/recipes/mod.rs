@@ -98,7 +98,7 @@ async fn get_recipe(
     Extension(user_id): Extension<i64>,
     Path(id): Path<i32>,
 ) -> Result<Json<Recipe>, AppError> {
-    let r_id = id as i64;
+    let r_id = i64::from(id);
     let u_id = user_id;
 
     let mut conn = state.pool.get().await?;
@@ -247,7 +247,7 @@ async fn create_recipe(
                     recipes::size_number.eq(payload.size_number),
                     recipes::size_text.eq(payload.size_text.clone()),
                     recipes::notes.eq(payload.notes.clone()),
-                    recipes::main_image_id.eq(payload.main_image.map(|i| i as i64)),
+                    recipes::main_image_id.eq(payload.main_image.map(i64::from)),
                 ))
                 .returning(recipes::id)
                 .get_result(conn)
@@ -277,7 +277,7 @@ async fn update_recipe(
         return Err(AppError::Unprocessable("Name cannot be empty".into()));
     }
 
-    let r_id = id as i64;
+    let r_id = i64::from(id);
     let u_id = user_id;
 
     let mut conn = state.pool.get().await?;
@@ -300,7 +300,7 @@ async fn delete_recipe(
     Extension(user_id): Extension<i64>,
     Path(id): Path<i32>,
 ) -> Result<axum::http::StatusCode, AppError> {
-    let r_id = id as i64;
+    let r_id = i64::from(id);
     let u_id = user_id;
 
     let mut conn = state.pool.get().await?;
@@ -684,7 +684,7 @@ async fn fetch_recipes(
             my_editor_since
                 .get(&id)
                 .or_else(|| my_viewer_since.get(&id))
-                .map(|ts| ts.to_rfc3339())
+                .map(chrono::DateTime::to_rfc3339)
         };
 
         data.push(RecipePreview {

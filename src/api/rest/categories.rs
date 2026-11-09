@@ -151,7 +151,7 @@ async fn update_category(
         return Err(AppError::Unprocessable("Color cannot be empty".into()));
     }
 
-    let c_id = id as i64;
+    let c_id = i64::from(id);
     let u_id = user_id;
     let mut conn = state.pool.get().await?;
 
@@ -180,7 +180,7 @@ async fn delete_category(
     Extension(user_id): Extension<i64>,
     Path(id): Path<i32>,
 ) -> Result<axum::http::StatusCode, AppError> {
-    let c_id = id as i64;
+    let c_id = i64::from(id);
     let u_id = user_id;
     let mut conn = state.pool.get().await?;
 
@@ -203,7 +203,7 @@ async fn update_category_recipes(
     Path(id): Path<i32>,
     Json(payload): Json<UpdateCategoryRecipes>,
 ) -> Result<Json<Category>, AppError> {
-    let c_id = id as i64;
+    let c_id = i64::from(id);
     let u_id = user_id;
     let mut conn = state.pool.get().await?;
 
@@ -223,17 +223,17 @@ async fn update_category_recipes(
 
     // Verify user has access to all recipes (owner, editor, or viewer)
     if !payload.recipe_ids.is_empty() {
-        let r_ids: Vec<i64> = payload.recipe_ids.iter().map(|id| *id as i64).collect();
+        let r_ids: Vec<i64> = payload.recipe_ids.iter().map(|id| i64::from(*id)).collect();
 
         let count = diesel::sql_query(
-            r#"
+            r"
             SELECT COUNT(DISTINCT r.id) AS count
             FROM recipes r
             LEFT JOIN recipe_editors e ON r.id = e.recipe_id
             LEFT JOIN recipe_viewers v ON r.id = v.recipe_id
             WHERE r.id = ANY($1)
               AND (r.owner_id = $2 OR e.user_id = $2 OR v.user_id = $2)
-            "#,
+            ",
         )
         .bind::<diesel::sql_types::Array<diesel::sql_types::BigInt>, _>(&r_ids)
         .bind::<diesel::sql_types::BigInt, _>(u_id)
@@ -258,7 +258,7 @@ async fn update_category_recipes(
         diesel::insert_into(user_category_recipes::table)
             .values((
                 user_category_recipes::category_id.eq(c_id),
-                user_category_recipes::recipe_id.eq(*r_id as i64),
+                user_category_recipes::recipe_id.eq(i64::from(*r_id)),
                 user_category_recipes::position.eq(i as i32),
             ))
             .execute(&mut conn)
@@ -279,7 +279,7 @@ async fn reorder_categories(
     let mut data = Vec::with_capacity(payload.category_ids.len());
 
     for (i, cat_id) in payload.category_ids.iter().enumerate() {
-        let c_id = *cat_id as i64;
+        let c_id = i64::from(*cat_id);
         let order = i as i32;
 
         let res = diesel::update(user_categories::table)

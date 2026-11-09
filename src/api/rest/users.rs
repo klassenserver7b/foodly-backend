@@ -321,7 +321,7 @@ async fn search_users(
         .replace('\\', "\\\\")
         .replace('%', "\\%")
         .replace('_', "\\_");
-    let pattern = format!("%{}%", escaped);
+    let pattern = format!("%{escaped}%");
 
     let mut conn = state.pool.get().await?;
 

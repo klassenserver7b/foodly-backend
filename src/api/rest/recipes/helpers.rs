@@ -49,15 +49,14 @@ pub(super) async fn insert_section(
     for (i_pos, ing) in sec.ingredients.into_iter().enumerate() {
         if !ing.is_valid() {
             return Err(AppError::Unprocessable(format!(
-                "Invalid ingredient: {:?}",
-                ing
+                "Invalid ingredient: {ing:?}"
             )));
         }
 
         diesel::insert_into(recipe_ingredients::table)
             .values((
                 recipe_ingredients::section_id.eq(sec_id),
-                recipe_ingredients::ingredient_id.eq(ing.ingredient.map(|i| i as i64)),
+                recipe_ingredients::ingredient_id.eq(ing.ingredient.map(i64::from)),
                 recipe_ingredients::text.eq(ing.text),
                 recipe_ingredients::amount.eq(ing.amount),
                 recipe_ingredients::amount_prefix.eq(ing.amount_prefix),
@@ -184,7 +183,7 @@ pub(super) async fn insert_recipe_images(
         .map(|(pos, img)| {
             (
                 recipe_images::recipe_id.eq(r_id),
-                recipe_images::image_id.eq(img as i64),
+                recipe_images::image_id.eq(i64::from(img)),
                 recipe_images::position.eq(pos as i32),
             )
         })
@@ -278,7 +277,7 @@ pub(super) async fn update_recipe_metadata(
             recipes::size_number.eq(payload.size_number),
             recipes::size_text.eq(payload.size_text.clone()),
             recipes::notes.eq(payload.notes.clone()),
-            recipes::main_image_id.eq(payload.main_image.map(|i| i as i64)),
+            recipes::main_image_id.eq(payload.main_image.map(i64::from)),
             recipes::updated_at.eq(diesel::dsl::now),
         ))
         .execute(conn)

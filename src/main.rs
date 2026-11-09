@@ -39,10 +39,10 @@ async fn run() -> anyhow::Result<()> {
     let server_address =
         std::env::var("SERVER_ADDRESS").unwrap_or_else(|_| "127.0.0.1".to_string());
     let server_port = std::env::var("SERVER_PORT").unwrap_or_else(|_| "8080".to_string());
-    let bind_addr = format!("{}:{}", server_address, server_port);
+    let bind_addr = format!("{server_address}:{server_port}");
 
     let listener = tokio::net::TcpListener::bind(&bind_addr).await?;
-    println!("Listening on {}", bind_addr);
+    println!("Listening on {bind_addr}");
 
     // into_make_service_with_connect_info is required for the rate
     // limiter's PeerIpKeyExtractor to extract the client IP from the

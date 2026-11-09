@@ -60,10 +60,7 @@ async fn list_ingredients(
 
     let data = records
         .into_iter()
-        .map(|(id, name)| Ingredient {
-            id: id as i32,
-            name,
-        })
+        .map(|(id, name)| Ingredient { id, name })
         .collect();
 
     Ok(Json(CatalogResponse { data }))

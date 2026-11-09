@@ -28,7 +28,7 @@ pub fn public_router() -> Router<AppState> {
 
 /// Protected routes: require auth. Upload records the uploader as owner;
 /// delete is restricted to the owner. Rate limited per client IP
-/// (unless RATE_LIMIT_MODE=disabled, e.g. in tests).
+/// (unless `RATE_LIMIT_MODE=disabled`, e.g. in tests).
 pub fn protected_router() -> Router<AppState> {
     let mode = RateLimitMode::from_env();
     if mode == RateLimitMode::Disabled {
@@ -106,17 +106,16 @@ async fn upload_image(
                 .await
                 .optional()?;
 
-            let (image, status_code) = match image {
-                Some(image) => (image, StatusCode::CREATED),
-                None => {
-                    // Hash already exists — fetch the existing row, keeping its owner
-                    let image = images::table
-                        .filter(images::hash.eq(&hash_for_tx))
-                        .select((images::id, images::hash, images::name))
-                        .first::<(i64, String, Option<String>)>(conn)
-                        .await?;
-                    (image, StatusCode::OK)
-                }
+            let (image, status_code) = if let Some(image) = image {
+                (image, StatusCode::CREATED)
+            } else {
+                // Hash already exists — fetch the existing row, keeping its owner
+                let image = images::table
+                    .filter(images::hash.eq(&hash_for_tx))
+                    .select((images::id, images::hash, images::name))
+                    .first::<(i64, String, Option<String>)>(conn)
+                    .await?;
+                (image, StatusCode::OK)
             };
 
             Ok((image, status_code))
@@ -273,6 +272,7 @@ async fn delete_image(
     Ok(StatusCode::NO_CONTENT)
 }
 
+#[must_use]
 pub fn infer_content_type(bytes: &[u8]) -> &'static str {
     if bytes.starts_with(&[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]) {
         "image/png"
