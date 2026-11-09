@@ -75,17 +75,14 @@ pub struct SecureClientIpKeyExtractor {
 impl KeyExtractor for SecureClientIpKeyExtractor {
     type Key = IpAddr;
 
-    fn extract<T>(
-        &self,
-        req: &Request<T>,
-    ) -> Result<Self::Key, tower_governor::errors::GovernorError> {
+    fn extract<T>(&self, req: &Request<T>) -> Result<Self::Key, GovernorError> {
         match self.mode {
             RateLimitMode::Direct => {
                 // Only the direct peer IP — never trust forwarded headers
                 let ci = req
                     .extensions()
                     .get::<axum::extract::ConnectInfo<SocketAddr>>()
-                    .ok_or(tower_governor::errors::GovernorError::UnableToExtractKey)?;
+                    .ok_or(GovernorError::UnableToExtractKey)?;
                 Ok(ci.0.ip())
             }
             RateLimitMode::Proxy => {
@@ -94,7 +91,7 @@ impl KeyExtractor for SecureClientIpKeyExtractor {
                 let ci = req
                     .extensions()
                     .get::<axum::extract::ConnectInfo<SocketAddr>>()
-                    .ok_or(tower_governor::errors::GovernorError::UnableToExtractKey)?;
+                    .ok_or(GovernorError::UnableToExtractKey)?;
                 let peer_ip = ci.0.ip();
 
                 if forwarded_headers_trusted(peer_ip, &trusted_proxies()) {
@@ -225,14 +222,14 @@ pub async fn auth_middleware(mut req: Request, next: Next) -> Response {
         && auth_str.starts_with("Bearer ")
     {
         let token = &auth_str[7..];
-        let secret = crate::services::auth::jwt_secret();
-        match crate::services::auth::verify_access_token(token, secret) {
+        let secret = services::auth::jwt_secret();
+        return match services::auth::verify_access_token(token, secret) {
             Ok(user_id) => {
                 req.extensions_mut().insert(user_id);
-                return next.run(req).await;
+                next.run(req).await
             }
-            Err(_) => return unauthorized_envelope(),
-        }
+            Err(_) => unauthorized_envelope(),
+        };
     }
 
     unauthorized_envelope()
@@ -269,7 +266,7 @@ pub fn app(state: AppState) -> Router {
                 .unwrap(),
         );
         let mut layer = GovernorLayer::new(governor_conf);
-        layer = layer.error_handler(|e: tower_governor::errors::GovernorError| {
+        layer = layer.error_handler(|e: GovernorError| {
             use serde_json::json;
             let (status, code, message) = match &e {
                 GovernorError::TooManyRequests { wait_time, .. } => (

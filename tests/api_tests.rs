@@ -385,6 +385,48 @@ async fn test_register_duplicate_email() {
     );
 }
 
+/// Logging in with different casing must match the registered email
+/// (CITEXT compares case-insensitively) and return the stored email.
+#[tokio::test]
+async fn test_login_email_case_insensitive() {
+    let app = app(test_state().await);
+    let (access, _refresh) =
+        register_test_user(&app, "Test User", "Mixed.Case@Example.com", "password123").await;
+    assert!(!access.is_empty());
+
+    let payload = serde_json::json!({
+        "email": "mixed.case@EXAMPLE.COM",
+        "password": "password123",
+    });
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/auth/login")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(serde_json::to_vec(&payload).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(
+        response.status(),
+        StatusCode::OK,
+        "login must succeed regardless of email casing"
+    );
+
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(
+        json["user"]["email"].as_str().unwrap(),
+        "Mixed.Case@Example.com",
+        "login must return the same stored email, not the input casing"
+    );
+}
+
 /// AC-005 partial: a rotated (used) refresh token must 401 when replayed.
 #[tokio::test]
 async fn test_refresh_reuse_rotated_token() {

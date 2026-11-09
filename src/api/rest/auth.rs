@@ -9,9 +9,7 @@ use axum::{
     http::StatusCode,
     routing::{delete, post},
 };
-use diesel::dsl::sql;
 use diesel::prelude::*;
-use diesel::sql_types::{Bool, Text};
 use diesel_async::RunQueryDsl;
 
 use crate::{
@@ -128,11 +126,7 @@ async fn login(
     let mut conn = state.pool.get().await?;
 
     let user: Option<(i64, String, String, String)> = users::table
-        .filter(
-            sql::<Bool>("users.email = ")
-                .bind::<Text, _>(payload.email.trim())
-                .sql("::citext"),
-        )
+        .filter(users::columns::email.eq(payload.email.trim()))
         .select((users::id, users::name, users::email, users::password_hash))
         .first::<(i64, String, String, String)>(&mut conn)
         .await
