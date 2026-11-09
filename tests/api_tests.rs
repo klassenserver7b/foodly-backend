@@ -748,3 +748,322 @@ async fn test_register_weak_password_422() {
         "password shorter than 8 characters must 422"
     );
 }
+
+// ─── Bulk user lookup (issue #10) ───────────────────────────────────────
+
+/// Helper: GET `/users/me` and return the caller's user id.
+async fn me_id(app: &axum::Router, token: &str) -> i64 {
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/users/me")
+                .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK, "GET /users/me failed");
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: Value = serde_json::from_slice(&body).unwrap();
+    json["id"].as_i64().unwrap()
+}
+
+/// Helper: GET `/users?ids=...` and return the parsed body.
+async fn bulk_users(app: &axum::Router, token: &str, ids: &str) -> Value {
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/v1/users?ids={ids}"))
+                .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK, "bulk lookup failed");
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    serde_json::from_slice(&body).unwrap()
+}
+
+#[tokio::test]
+async fn test_bulk_get_users() {
+    let app = app(test_state().await);
+
+    let (token_a, _) = register_test_user(&app, "User A", "a@example.com", "password123").await;
+    let (token_b, _) = register_test_user(&app, "User B", "b@example.com", "password123").await;
+    let (_token_c, _) = register_test_user(&app, "User C", "c@example.com", "password123").await;
+
+    let id_a = me_id(&app, &token_a).await;
+    let id_b = me_id(&app, &token_b).await;
+
+    let json = bulk_users(&app, &token_a, &format!("{id_a},{id_b}")).await;
+    let data = json["data"].as_array().expect("data must be an array");
+    assert_eq!(data.len(), 2, "only the requested users must be returned");
+
+    let mut ids: Vec<i64> = data.iter().map(|u| u["id"].as_i64().unwrap()).collect();
+    ids.sort_unstable();
+    let mut expected = vec![id_a, id_b];
+    expected.sort_unstable();
+    assert_eq!(ids, expected);
+
+    for user in data {
+        assert!(user["name"].is_string(), "name must be present");
+        assert!(
+            user.get("profilePicture").is_some(),
+            "profilePicture (camelCase) must be present"
+        );
+        assert!(
+            user.get("email").is_none(),
+            "bulk lookup must not leak email addresses"
+        );
+    }
+}
+
+#[tokio::test]
+async fn test_bulk_get_users_drops_malformed_ids() {
+    let app = app(test_state().await);
+
+    let (token_a, _) = register_test_user(&app, "User A", "a@example.com", "password123").await;
+    let (token_b, _) = register_test_user(&app, "User B", "b@example.com", "password123").await;
+
+    let id_a = me_id(&app, &token_a).await;
+    let id_b = me_id(&app, &token_b).await;
+
+    let json = bulk_users(&app, &token_a, &format!("{id_a},abc,{id_b}")).await;
+    let data = json["data"].as_array().unwrap();
+    assert_eq!(data.len(), 2, "malformed segment must be dropped silently");
+
+    let mut ids: Vec<i64> = data.iter().map(|u| u["id"].as_i64().unwrap()).collect();
+    ids.sort_unstable();
+    let mut expected = vec![id_a, id_b];
+    expected.sort_unstable();
+    assert_eq!(ids, expected);
+}
+
+#[tokio::test]
+async fn test_bulk_get_users_empty_ids() {
+    let app = app(test_state().await);
+    let (token, _) = register_test_user(&app, "User A", "a@example.com", "password123").await;
+
+    let json = bulk_users(&app, &token, "").await;
+    assert_eq!(json["data"].as_array().unwrap().len(), 0);
+}
+
+// ─── Recipe access-since (issue #14) ────────────────────────────────────
+
+/// Helper: create a minimal recipe as `token` and return the full response.
+async fn create_test_recipe(app: &axum::Router, token: &str, name: &str) -> Value {
+    let payload = serde_json::json!({
+        "name": name,
+        "tags": [],
+        "source": null,
+        "time": null,
+        "workMinutes": null,
+        "overallMinutes": null,
+        "sizeNumber": null,
+        "sizeText": null,
+        "notes": [],
+        "mainImage": null,
+        "images": [],
+        "sections": []
+    });
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/recipes")
+                .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(serde_json::to_vec(&payload).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK, "recipe creation failed");
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    serde_json::from_slice(&body).unwrap()
+}
+
+/// Helper: GET `/recipes/:id` as `token` and return the body.
+async fn get_recipe_json(app: &axum::Router, token: &str, id: i64) -> Value {
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/v1/recipes/{id}"))
+                .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK, "GET recipe failed");
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    serde_json::from_slice(&body).unwrap()
+}
+
+/// Helper: add a (recipe, user) membership row to `recipe_editors` or
+/// `recipe_viewers` using the table's default `added_at`.
+async fn add_recipe_member(state: &AppState, table: &str, recipe_id: i64, user_id: i64) {
+    let mut conn = state.pool.get().await.unwrap();
+    conn.batch_execute(&format!(
+        "INSERT INTO {table} (recipe_id, user_id) VALUES ({recipe_id}, {user_id})"
+    ))
+    .await
+    .unwrap();
+}
+
+/// The owner's access starts when the recipe was created — `myAccessSince`
+/// must equal `createdAt`, both on the full object and the list preview.
+#[tokio::test]
+async fn test_recipe_my_access_since_owner() {
+    let app = app(test_state().await);
+    let (token, _) = register_test_user(&app, "Owner", "owner@example.com", "password123").await;
+
+    let recipe = create_test_recipe(&app, &token, "Owner Recipe").await;
+    let recipe_id = recipe["id"].as_i64().unwrap();
+    assert_eq!(
+        recipe["myAccessSince"], recipe["createdAt"],
+        "owner's myAccessSince must be createdAt"
+    );
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/recipes")
+                .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let list: Value = serde_json::from_slice(&body).unwrap();
+
+    let preview = list["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["id"].as_i64() == Some(recipe_id))
+        .expect("recipe must be in the owner's list");
+    assert_eq!(
+        preview["myAccessSince"], preview["createdAt"],
+        "owner's preview myAccessSince must be createdAt"
+    );
+}
+
+/// Editors and viewers get the join-table `added_at`; the full fetch and the
+/// list preview must both expose it.
+#[tokio::test]
+async fn test_recipe_my_access_since_shared() {
+    let state = test_state().await;
+    let app = app(state.clone());
+
+    let (owner_token, _) =
+        register_test_user(&app, "Owner", "owner@example.com", "password123").await;
+    let (editor_token, _) =
+        register_test_user(&app, "Editor", "editor@example.com", "password123").await;
+    let (viewer_token, _) =
+        register_test_user(&app, "Viewer", "viewer@example.com", "password123").await;
+
+    let recipe = create_test_recipe(&app, &owner_token, "Shared Recipe").await;
+    let recipe_id = recipe["id"].as_i64().unwrap();
+
+    let editor_id = me_id(&app, &editor_token).await;
+    let viewer_id = me_id(&app, &viewer_token).await;
+    add_recipe_member(&state, "recipe_editors", recipe_id, editor_id).await;
+    add_recipe_member(&state, "recipe_viewers", recipe_id, viewer_id).await;
+
+    for token in [&editor_token, &viewer_token] {
+        let json = get_recipe_json(&app, token, recipe_id).await;
+        let since = json["myAccessSince"]
+            .as_str()
+            .expect("myAccessSince must be set for shared users");
+        assert!(!since.is_empty());
+
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/recipes")
+                    .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        let list: Value = serde_json::from_slice(&body).unwrap();
+
+        let preview = list["data"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|p| p["id"].as_i64() == Some(recipe_id))
+            .expect("shared recipe must appear in the user's list");
+        assert_eq!(
+            preview["myAccessSince"].as_str(),
+            Some(since),
+            "list preview must expose the same myAccessSince as the full fetch"
+        );
+    }
+}
+
+/// `sort.field = "access_since"` is accepted and preserves the usual
+/// visibility-scoped result set.
+#[tokio::test]
+async fn test_recipe_search_sort_by_access_since() {
+    let app = app(test_state().await);
+    let (token, _) = register_test_user(&app, "Owner", "owner@example.com", "password123").await;
+
+    let first = create_test_recipe(&app, &token, "First Recipe").await;
+    let second = create_test_recipe(&app, &token, "Second Recipe").await;
+
+    let payload = serde_json::json!({
+        "sort": { "field": "access_since", "order": "desc" }
+    });
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/recipes/search")
+                .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(serde_json::to_vec(&payload).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: Value = serde_json::from_slice(&body).unwrap();
+
+    let mut ids: Vec<i64> = json["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|p| p["id"].as_i64().unwrap())
+        .collect();
+    ids.sort_unstable();
+    let mut expected = vec![
+        first["id"].as_i64().unwrap(),
+        second["id"].as_i64().unwrap(),
+    ];
+    expected.sort_unstable();
+    assert_eq!(ids, expected);
+}

@@ -11,8 +11,8 @@ use crate::{
     AppState,
     error::AppError,
     models::user::{
-        ProfilePictureResponse, User, UserPutPayload, UserSearchItem, UserSearchQuery,
-        UserSearchResponse, UserUpdatePayload,
+        ProfilePictureResponse, User, UserBulkQuery, UserPutPayload, UserSearchItem,
+        UserSearchQuery, UserSearchResponse, UserUpdatePayload,
     },
     services::storage,
 };
@@ -30,6 +30,7 @@ pub fn router() -> Router<AppState> {
                 .layer(axum::extract::DefaultBodyLimit::max(8 * 1024 * 1024))
                 .delete(delete_profile_picture),
         )
+        .route("/", get(bulk_get_users))
         .route("/search", get(search_users))
 }
 
@@ -333,6 +334,43 @@ async fn search_users(
         .await?;
 
     let data = users
+        .into_iter()
+        .map(|(id, name, profile_picture)| UserSearchItem {
+            id,
+            name,
+            profile_picture,
+        })
+        .collect();
+
+    Ok(Json(UserSearchResponse { data }))
+}
+
+async fn bulk_get_users(
+    State(state): State<AppState>,
+    Query(query): Query<UserBulkQuery>,
+) -> Result<Json<UserSearchResponse>, AppError> {
+    // Malformed segments are dropped silently: `ids=1,abc,3` → `[1, 3]`.
+    let ids: Vec<i64> = query
+        .ids
+        .as_deref()
+        .unwrap_or_default()
+        .split(',')
+        .filter_map(|segment| segment.trim().parse::<i64>().ok())
+        .collect();
+
+    if ids.is_empty() {
+        return Ok(Json(UserSearchResponse { data: vec![] }));
+    }
+
+    let mut conn = state.pool.get().await?;
+
+    let rows = users::table
+        .filter(users::id.eq_any(&ids))
+        .select((users::id, users::name, users::profile_picture))
+        .load::<(i64, String, Option<String>)>(&mut conn)
+        .await?;
+
+    let data = rows
         .into_iter()
         .map(|(id, name, profile_picture)| UserSearchItem {
             id,

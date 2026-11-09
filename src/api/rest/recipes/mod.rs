@@ -143,6 +143,29 @@ async fn get_recipe(
         return Err(AppError::Forbidden);
     }
 
+    // `myAccessSince` reflects when *this* user got access; the owner's
+    // access starts when the recipe was created. Editor beats viewer when a
+    // user somehow appears in both lists.
+    let my_access_since = if owner_id == u_id {
+        Some(created_at.to_rfc3339())
+    } else {
+        let editor_since: Option<DateTime<Utc>> = recipe_editors::table
+            .filter(recipe_editors::recipe_id.eq(r_id))
+            .filter(recipe_editors::user_id.eq(u_id))
+            .select(recipe_editors::added_at)
+            .first(&mut conn)
+            .await
+            .optional()?;
+        let viewer_since: Option<DateTime<Utc>> = recipe_viewers::table
+            .filter(recipe_viewers::recipe_id.eq(r_id))
+            .filter(recipe_viewers::user_id.eq(u_id))
+            .select(recipe_viewers::added_at)
+            .first(&mut conn)
+            .await
+            .optional()?;
+        editor_since.or(viewer_since).map(|ts| ts.to_rfc3339())
+    };
+
     let tags: Vec<String> = recipe_tags::table
         .filter(recipe_tags::recipe_id.eq(r_id))
         .order(recipe_tags::position.asc())
@@ -194,6 +217,7 @@ async fn get_recipe(
         sections,
         created_at: Some(created_at.to_rfc3339()),
         updated_at: Some(updated_at.to_rfc3339()),
+        my_access_since,
     };
     Ok(Json(recipe))
 }
@@ -510,6 +534,20 @@ async fn fetch_recipes(
                     "(SELECT COALESCE(AVG(rating), 0.0) FROM user_ratings WHERE recipe_id = recipes.id) {dir} NULLS LAST"
                 )));
             }
+            "access_since" | "accessSince" => {
+                // Mirrors the per-row `myAccessSince` computation: owner uses
+                // the recipe's creation time, everyone else their join-table
+                // `added_at` (editor before viewer).
+                let dir = if desc { "DESC" } else { "ASC" };
+                q = q.then_order_by(diesel::dsl::sql::<diesel::sql_types::Timestamptz>(
+                    &format!(
+                        "CASE WHEN recipes.owner_id = {u_id} THEN recipes.created_at ELSE COALESCE(\
+                         (SELECT added_at FROM recipe_editors WHERE recipe_id = recipes.id AND user_id = {u_id}), \
+                         (SELECT added_at FROM recipe_viewers WHERE recipe_id = recipes.id AND user_id = {u_id}), \
+                         recipes.created_at) END {dir}"
+                    ),
+                ));
+            }
             _ => {
                 q = q.then_order_by(recipes::id.asc());
             }
@@ -550,6 +588,33 @@ async fn fetch_recipes(
             .select((recipe_viewers::recipe_id, recipe_viewers::user_id))
             .load(&mut conn)
             .await?
+    };
+
+    // When the current user was added as editor/viewer, keyed by recipe.
+    let my_editor_since: HashMap<i64, DateTime<Utc>> = if ids.is_empty() {
+        HashMap::new()
+    } else {
+        recipe_editors::table
+            .filter(recipe_editors::recipe_id.eq_any(&ids))
+            .filter(recipe_editors::user_id.eq(u_id))
+            .select((recipe_editors::recipe_id, recipe_editors::added_at))
+            .load::<(i64, DateTime<Utc>)>(&mut conn)
+            .await?
+            .into_iter()
+            .collect()
+    };
+
+    let my_viewer_since: HashMap<i64, DateTime<Utc>> = if ids.is_empty() {
+        HashMap::new()
+    } else {
+        recipe_viewers::table
+            .filter(recipe_viewers::recipe_id.eq_any(&ids))
+            .filter(recipe_viewers::user_id.eq(u_id))
+            .select((recipe_viewers::recipe_id, recipe_viewers::added_at))
+            .load::<(i64, DateTime<Utc>)>(&mut conn)
+            .await?
+            .into_iter()
+            .collect()
     };
 
     let tags: Vec<(i64, String)> = if ids.is_empty() {
@@ -613,6 +678,15 @@ async fn fetch_recipes(
             .map(|(_, tag)| tag.clone())
             .collect();
 
+        let my_access_since = if owner_id == u_id {
+            Some(created_at.to_rfc3339())
+        } else {
+            my_editor_since
+                .get(&id)
+                .or_else(|| my_viewer_since.get(&id))
+                .map(|ts| ts.to_rfc3339())
+        };
+
         data.push(RecipePreview {
             id: id as i32,
             owner: owner_id as i32,
@@ -630,6 +704,7 @@ async fn fetch_recipes(
             main_image: main_image_id.and_then(|id| image_map.get(&id).cloned()),
             created_at: Some(created_at.to_rfc3339()),
             updated_at: Some(updated_at.to_rfc3339()),
+            my_access_since,
         });
     }
 

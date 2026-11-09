@@ -266,6 +266,37 @@ Search for users by name (or partial name) for use in "invite to recipe" or "add
 
 ---
 
+## Bulk User Lookup
+
+### `GET /api/v1/users?ids=2,3,5`
+
+Resolve a set of user ids to compact display data in a single request. The frontend uses this to render `owner`, `editors`, `viewers`, and `rating[].user` names from the id references returned by the recipe endpoints (replaces the client-side `listUsers` mock).
+
+**Query parameters:**
+
+| Parameter | Type     | Required | Description                                                        |
+|-----------|----------|----------|--------------------------------------------------------------------|
+| `ids`     | `string` | yes      | Comma-separated user ids, e.g. `2,3,5`. Whitespace around ids is ignored. |
+
+Malformed segments are **dropped silently** (`ids=1,abc,3` → `[1, 3]`). A missing or empty `ids` parameter returns an empty list rather than an error.
+
+**Response `200 OK`:**
+```json
+{
+  "data": [
+    { "id": 2, "name": "Mara", "profilePicture": "c4f1..." },
+    { "id": 3, "name": "Jonas", "profilePicture": null }
+  ]
+}
+```
+
+> Same compact shape as `GET /users/search` — `id`, `name`, `profilePicture` only. Email addresses are **never** included. Unknown ids are omitted from the result. Order is not guaranteed.
+
+**Errors:**
+- `401 Unauthorized` — missing/invalid access token.
+
+---
+
 ## Recipes
 
 ### `GET /api/v1/recipes`
@@ -300,7 +331,7 @@ Search and list recipes accessible to the authenticated user (owned + shared as 
     "shareStates": ["private", "shared", "collaborative"]
   },
   "sort": {
-    "field": "rating", // "name", "work_time", "total_time", "rating"
+    "field": "rating", // "name", "work_time", "total_time", "rating", "access_since"
     "order": "desc"    // "asc", "desc"
   }
 }
@@ -330,7 +361,8 @@ Search and list recipes accessible to the authenticated user (owned + shared as 
       "sizeText": "{Portionen}",
       "mainImage": 1,
       "createdAt": "2026-01-10T12:00:00Z",
-      "updatedAt": "2026-03-15T09:30:00Z"
+      "updatedAt": "2026-03-15T09:30:00Z",
+      "myAccessSince": "2026-02-01T08:15:00Z"
     }
   ],
   "cursor": "2"
@@ -338,6 +370,8 @@ Search and list recipes accessible to the authenticated user (owned + shared as 
 ```
 
 > **Scope:** The backend **only returns recipes where the user is `owner`, `editor`, or `viewer`**. The frontend does not need to filter by access itself. The `cursor` in the response represents the next page number as a string, or `null` if there are no more pages.
+
+> **`myAccessSince`:** when the *requesting* user gained access to the recipe. For the `owner` it equals `createdAt`; for an `editor`/`viewer` it is the join-table `added_at` timestamp (editor wins if a user appears in both lists). Use it for "recently shared with you" ordering; `sort.field = "access_since"` orders by the same value.
 
 ---
 
@@ -396,13 +430,16 @@ Get a single recipe with **full data** including sections, ingredients, steps, n
     }
   ],
   "createdAt": "2026-01-10T12:00:00Z",
-  "updatedAt": "2026-03-15T09:30:00Z"
+  "updatedAt": "2026-03-15T09:30:00Z",
+  "myAccessSince": "2026-01-10T12:00:00Z"
 }
 ```
 
 **Errors:**
 - `404 Not Found` — recipe does not exist.
 - `403 Forbidden` — user is not owner/editor/viewer.
+
+> `myAccessSince` follows the same semantics as in the previews: owner → `createdAt`, editor/viewer → the join-table `added_at`.
 
 ---
 
@@ -1072,6 +1109,7 @@ CORS_ALLOWED_ORIGINS=https://app.example.com
 | `PUT`    | `/api/v1/users/me/profile-picture`    | yes  | Upload/replace profile picture                   |
 | `DELETE` | `/api/v1/users/me/profile-picture`    | yes  | Remove profile picture                           |
 | `GET`    | `/api/v1/users/search?q=...`          | yes  | Search users by name (invite dropdown)           |
+| `GET`    | `/api/v1/users?ids=2,3,5`             | yes  | Bulk user lookup (id → name/picture)             |
 | `GET`    | `/api/v1/recipes`                     | yes  | List recipes (preview, paginated)                |
 | `GET`    | `/api/v1/recipes/:id`                 | yes  | Get full recipe                                  |
 | `POST`   | `/api/v1/recipes`                     | yes  | Create recipe                                    |

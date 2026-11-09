@@ -172,6 +172,7 @@ CREATE TABLE recipe_images (
 CREATE TABLE recipe_editors (
     recipe_id BIGINT NOT NULL REFERENCES recipes(id) ON DELETE CASCADE,
     user_id   BIGINT NOT NULL REFERENCES users(id)   ON DELETE CASCADE,
+    added_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
 
     PRIMARY KEY (recipe_id, user_id)
 );
@@ -187,6 +188,7 @@ CREATE INDEX idx_recipe_editors_user ON recipe_editors(user_id);
 CREATE TABLE recipe_viewers (
     recipe_id BIGINT NOT NULL REFERENCES recipes(id) ON DELETE CASCADE,
     user_id   BIGINT NOT NULL REFERENCES users(id)   ON DELETE CASCADE,
+    added_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
 
     PRIMARY KEY (recipe_id, user_id)
 );
@@ -195,6 +197,8 @@ CREATE INDEX idx_recipe_viewers_user ON recipe_viewers(user_id);
 ```
 
 > The index on `user_id` is critical: the `GET /api/v1/recipes` endpoint queries "all recipes where user is owner OR editor OR viewer", which requires efficient lookup by user across all three roles.
+
+> `added_at` records when the user was added as editor/viewer. It powers the recipe's `myAccessSince` field (owner → `recipes.created_at`) and the optional `sort.field = "access_since"`.
 
 ---
 

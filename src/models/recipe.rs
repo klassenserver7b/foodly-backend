@@ -85,6 +85,10 @@ pub struct Recipe {
     pub created_at: Option<String>,
     #[serde(default)]
     pub updated_at: Option<String>,
+    /// When the requesting user gained access: `created_at` for the owner,
+    /// the join-table `added_at` for editors/viewers.
+    #[serde(default)]
+    pub my_access_since: Option<String>,
 }
 
 // For List endpoint
@@ -107,6 +111,7 @@ pub struct RecipePreview {
     pub main_image: Option<ImageRef>,
     pub created_at: Option<String>,
     pub updated_at: Option<String>,
+    pub my_access_since: Option<String>,
 }
 
 impl From<Recipe> for RecipePreview {
@@ -128,6 +133,7 @@ impl From<Recipe> for RecipePreview {
             main_image: recipe.main_image,
             created_at: recipe.created_at,
             updated_at: recipe.updated_at,
+            my_access_since: recipe.my_access_since,
         }
     }
 }
