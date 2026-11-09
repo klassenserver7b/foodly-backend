@@ -8,24 +8,34 @@ use diesel_async::pooled_connection::AsyncDieselConnectionManager;
 use diesel_async::pooled_connection::deadpool::Pool;
 use std::env;
 
+use diesel_async::RunQueryDsl;
+
 pub type DbPool = Pool<AsyncPgConnection>;
+
+/// Serializes all mutations of the same image hash for the duration of the
+/// current transaction.
+///
+/// Every insert/delete of a file-backed `images` hash must take this lock
+/// first, otherwise the database row and the file on disk can diverge (e.g.
+/// a concurrent upload re-creating a row right after a delete commits but
+/// before the file is removed). Released automatically on commit/rollback.
+pub async fn lock_image_hash(conn: &mut AsyncPgConnection, hash: &str) -> diesel::QueryResult<()> {
+    diesel::sql_query("SELECT pg_advisory_xact_lock(hashtext($1))")
+        .bind::<diesel::sql_types::Text, _>(hash)
+        .execute(conn)
+        .await?;
+    Ok(())
+}
 
 /// Idempotent schema migrations applied in order on startup.
 ///
 /// The files guard every statement with `IF NOT EXISTS`, so re-running is safe.
 const MIGRATIONS: &[&str] = &[
-    include_str!("migrations/001_create_users.sql"),
-    include_str!("migrations/002_create_tags_and_ingredients.sql"),
-    include_str!("migrations/003_create_images.sql"),
-    include_str!("migrations/004_create_recipes.sql"),
-    include_str!("migrations/005_create_sections.sql"),
-    include_str!("migrations/006_create_steps.sql"),
-    include_str!("migrations/007_create_recipe_ingredients.sql"),
-    include_str!("migrations/008_create_permissions.sql"),
-    include_str!("migrations/009_create_ratings.sql"),
-    include_str!("migrations/010_create_categories.sql"),
-    include_str!("migrations/011_create_groups.sql"),
-    include_str!("migrations/012_create_auth_tokens.sql"),
+    include_str!("migrations/001_users_and_auth.sql"),
+    include_str!("migrations/002_catalog.sql"),
+    include_str!("migrations/003_images.sql"),
+    include_str!("migrations/004_recipes.sql"),
+    include_str!("migrations/005_user_organizations.sql"),
 ];
 
 /// Initializes the diesel-async connection pool and applies pending migrations.

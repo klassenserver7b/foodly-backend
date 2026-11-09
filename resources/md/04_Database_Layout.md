@@ -21,7 +21,7 @@ described in [02_API_Design.md](02_API_Design.md).
 
 ```sql
 CREATE EXTENSION IF NOT EXISTS "citext";   -- case-insensitive text (for email)
-CREATE EXTENSION IF NOT EXISTS "pgcrypto"; -- gen_random_uuid() for WS tickets
+CREATE EXTENSION IF NOT EXISTS "pgcrypto"; -- gen_random_uuid() (kept for future use)
 ```
 
 ---
@@ -61,25 +61,9 @@ CREATE TABLE refresh_tokens (
 CREATE INDEX idx_refresh_tokens_user ON refresh_tokens(user_id);
 ```
 
----
-
-### `ws_tickets`
-
-Short-lived, one-time tickets for WebSocket authentication.
-
-```sql
-CREATE TABLE ws_tickets (
-    id         BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    user_id    BIGINT      NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    ticket     UUID        NOT NULL UNIQUE DEFAULT gen_random_uuid(),
-    expires_at TIMESTAMPTZ NOT NULL,
-    used       BOOLEAN     NOT NULL DEFAULT false
-);
-
-CREATE INDEX idx_ws_tickets_ticket ON ws_tickets(ticket);
-```
-
-> Expired/used tickets are cleaned up periodically by a background job.
+> **Future idea (not implemented):** one-time WebSocket tickets (`ws_tickets`) were
+> sketched for short-lived WS auth. Revisit when the WS layer lands; the table is
+> currently unused. Expired/used tickets would be cleaned up by a background job.
 
 ---
 

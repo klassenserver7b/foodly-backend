@@ -1,5 +1,6 @@
 use axum::Router;
 
+pub mod auth;
 pub mod catalogs;
 pub mod categories;
 pub mod images;
@@ -13,5 +14,4 @@ pub fn router() -> Router<crate::AppState> {
         .nest("/ingredients", catalogs::ingredients_router())
         .nest("/categories", categories::router())
         .nest("/users", users::router())
-        .nest("/images", images::router())
 }

@@ -4,7 +4,7 @@ diesel::table! {
     users (id) {
         id -> BigInt,
         name -> Text,
-        email -> Text, // citext
+        email -> Citext,
         password_hash -> Text,
         profile_picture -> Nullable<Text>,
         created_at -> Timestamptz,
@@ -30,6 +30,7 @@ diesel::table! {
         id -> BigInt,
         hash -> Text,
         name -> Nullable<Text>,
+        owner_id -> Nullable<BigInt>,
     }
 }
 

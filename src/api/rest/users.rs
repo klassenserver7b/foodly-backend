@@ -17,9 +17,9 @@ use crate::{
     services::storage,
 };
 use diesel::prelude::*;
-use diesel_async::RunQueryDsl;
+use diesel_async::{AsyncConnection, AsyncPgConnection, RunQueryDsl};
 
-use crate::schema::users;
+use crate::schema::{images, users};
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -35,12 +35,12 @@ pub fn router() -> Router<AppState> {
 
 async fn get_me(
     State(state): State<AppState>,
-    Extension(user_id): Extension<i32>,
+    Extension(user_id): Extension<i64>,
 ) -> Result<Json<User>, AppError> {
     let mut conn = state.pool.get().await?;
 
     let user = users::table
-        .filter(users::id.eq(user_id as i64))
+        .filter(users::id.eq(user_id))
         .select((users::id, users::name, users::email, users::profile_picture))
         .first::<(i64, String, String, Option<String>)>(&mut conn)
         .await
@@ -57,7 +57,7 @@ async fn get_me(
 
 async fn patch_me(
     State(state): State<AppState>,
-    Extension(user_id): Extension<i32>,
+    Extension(user_id): Extension<i64>,
     Json(payload): Json<UserUpdatePayload>,
 ) -> Result<Json<User>, AppError> {
     if let Some(name) = &payload.name
@@ -76,7 +76,7 @@ async fn patch_me(
 
     // Read current values for the COALESCE-like partial update
     let (current_name, current_email): (String, String) = users::table
-        .filter(users::id.eq(user_id as i64))
+        .filter(users::id.eq(user_id))
         .select((users::name, users::email))
         .first(&mut conn)
         .await?;
@@ -85,7 +85,7 @@ async fn patch_me(
     let new_email = payload.email.unwrap_or(current_email);
 
     let user = diesel::update(users::table)
-        .filter(users::id.eq(user_id as i64))
+        .filter(users::id.eq(user_id))
         .set((users::name.eq(new_name), users::email.eq(new_email)))
         .returning((users::id, users::name, users::email, users::profile_picture))
         .get_result::<(i64, String, String, Option<String>)>(&mut conn)
@@ -101,7 +101,7 @@ async fn patch_me(
 
 async fn put_me(
     State(state): State<AppState>,
-    Extension(user_id): Extension<i32>,
+    Extension(user_id): Extension<i64>,
     Json(payload): Json<UserPutPayload>,
 ) -> Result<Json<User>, AppError> {
     if payload.name.trim().is_empty() {
@@ -114,7 +114,7 @@ async fn put_me(
     let mut conn = state.pool.get().await?;
 
     let user = diesel::update(users::table)
-        .filter(users::id.eq(user_id as i64))
+        .filter(users::id.eq(user_id))
         .set((
             users::name.eq(payload.name.clone()),
             users::email.eq(payload.email.clone()),
@@ -133,7 +133,7 @@ async fn put_me(
 
 async fn update_profile_picture(
     State(state): State<AppState>,
-    Extension(user_id): Extension<i32>,
+    Extension(user_id): Extension<i64>,
     bytes: Bytes,
 ) -> Result<Json<ProfilePictureResponse>, AppError> {
     if bytes.is_empty() {
@@ -147,39 +147,166 @@ async fn update_profile_picture(
         ));
     }
 
-    let hash = storage::save_image(&state.image_storage_path, &bytes).await?;
+    let hash = storage::hash_bytes(&bytes);
 
     let mut conn = state.pool.get().await?;
 
-    diesel::update(users::table)
-        .filter(users::id.eq(user_id as i64))
-        .set(users::profile_picture.eq(hash.clone()))
-        .execute(&mut conn)
-        .await?;
+    // Insert the `images` row alongside the profile-picture update so the
+    // hash is reachable through `GET /images/:hash` too. The row and the
+    // pointer must not diverge.
+    let new_hash = hash.clone();
+    let storage_dir = state.image_storage_path.clone();
+    let body = bytes.clone();
+    conn.transaction::<_, AppError, _>(async move |conn| {
+        // Serialize with every other mutation of the same hash. The bytes are
+        // (re)written after the lock so a concurrent delete cannot leave the
+        // new row pointing at a removed file.
+        crate::db::lock_image_hash(conn, &new_hash).await?;
+        storage::write_image(&storage_dir, &new_hash, &body).await?;
+
+        // Re-uploading identical bytes is idempotent: keep the existing row
+        // (and its owner) just like `upload_image` does.
+        diesel::insert_into(images::table)
+            .values((
+                images::hash.eq(&new_hash),
+                images::name.eq::<Option<String>>(None),
+                images::owner_id.eq(user_id),
+            ))
+            .on_conflict(images::hash)
+            .do_nothing()
+            .execute(conn)
+            .await?;
+
+        let old_hash: Option<String> = users::table
+            .filter(users::id.eq(user_id))
+            .select(users::profile_picture)
+            .first::<Option<String>>(conn)
+            .await?;
+
+        diesel::update(users::table)
+            .filter(users::id.eq(user_id))
+            .set(users::profile_picture.eq(&new_hash))
+            .execute(conn)
+            .await?;
+
+        // Only remove the old file if nothing still references it. The
+        // reference check and the unlink run under the old hash's lock so a
+        // concurrent upload cannot re-create the row before the file goes.
+        if let Some(old_hash) = old_hash
+            && old_hash != new_hash
+        {
+            crate::db::lock_image_hash(conn, &old_hash).await?;
+            if !is_image_still_referenced(conn, &old_hash, user_id).await? {
+                let _ = storage::delete_image(&storage_dir, &old_hash).await;
+            }
+        }
+
+        Ok(())
+    })
+    .await?;
 
     Ok(Json(ProfilePictureResponse {
         profile_picture: hash,
     }))
 }
 
+/// Check whether the image file for `hash` is still referenced by anyone:
+/// - as another user's profile picture
+/// - by a row in `images` (which `GET /images/:hash` serves, and which recipe
+///   images/main images point at)
+/// - as a recipe gallery image (`recipe_images.image_id` → `images.id`)
+/// - as a recipe main image (`recipes.main_image_id` → `images.id`)
+///
+/// If true, the file must not be deleted from disk.
+async fn is_image_still_referenced(
+    conn: &mut AsyncPgConnection,
+    hash: &str,
+    exclude_user_id: i64,
+) -> Result<bool, AppError> {
+    // Another user still uses this hash as their profile picture
+    let profile_used: bool = diesel::select(diesel::dsl::exists(
+        users::table
+            .filter(users::id.ne(exclude_user_id))
+            .filter(users::profile_picture.eq(hash)),
+    ))
+    .first(conn)
+    .await?;
+    if profile_used {
+        return Ok(true);
+    }
+
+    // An `images` row is itself a live reference: the file stays reachable via
+    // `GET /images/:hash`, and recipe gallery/main image links point at this
+    // row (`ON DELETE` on `recipe_images.image_id` is CASCADE). Deleting the
+    // file here would leave the row unreadable.
+    let image_exists: bool = diesel::select(diesel::dsl::exists(
+        images::table.filter(images::hash.eq(hash)),
+    ))
+    .first(conn)
+    .await?;
+    if image_exists {
+        return Ok(true);
+    }
+
+    Ok(false)
+}
+
 async fn delete_profile_picture(
     State(state): State<AppState>,
-    Extension(user_id): Extension<i32>,
+    Extension(user_id): Extension<i64>,
 ) -> Result<impl IntoResponse, AppError> {
     let mut conn = state.pool.get().await?;
 
-    diesel::update(users::table)
-        .filter(users::id.eq(user_id as i64))
-        .set(users::profile_picture.eq::<Option<String>>(None))
-        .execute(&mut conn)
-        .await?;
+    // Clearing the pointer and deciding whether the file is still referenced
+    // must happen atomically under the hash's lock; otherwise a concurrent
+    // upload could re-create the row after our check but before the delete.
+    let storage_dir = state.image_storage_path.clone();
+    conn.transaction::<_, AppError, _>(async move |conn| {
+        let current_hash: Option<String> = users::table
+            .filter(users::id.eq(user_id))
+            .select(users::profile_picture)
+            .first::<Option<String>>(conn)
+            .await?;
+
+        let Some(current_hash) = current_hash else {
+            return Ok(());
+        };
+
+        crate::db::lock_image_hash(conn, &current_hash).await?;
+
+        // Re-read under the lock: another request may have swapped the
+        // picture while we waited, in which case it owns the cleanup.
+        let latest_hash: Option<String> = users::table
+            .filter(users::id.eq(user_id))
+            .select(users::profile_picture)
+            .first::<Option<String>>(conn)
+            .await?;
+        if latest_hash.as_deref() != Some(current_hash.as_str()) {
+            return Ok(());
+        }
+
+        diesel::update(users::table)
+            .filter(users::id.eq(user_id))
+            .set(users::profile_picture.eq::<Option<String>>(None))
+            .execute(conn)
+            .await?;
+
+        // Delete the file from disk only if nothing still references it,
+        // while the lock is still held.
+        if !is_image_still_referenced(conn, &current_hash, user_id).await? {
+            let _ = storage::delete_image(&storage_dir, &current_hash).await;
+        }
+
+        Ok(())
+    })
+    .await?;
 
     Ok(StatusCode::NO_CONTENT)
 }
 
 async fn search_users(
     State(state): State<AppState>,
-    Extension(user_id): Extension<i32>,
+    Extension(user_id): Extension<i64>,
     Query(query): Query<UserSearchQuery>,
 ) -> Result<Json<UserSearchResponse>, AppError> {
     if query.q.trim().is_empty() {
@@ -187,12 +314,18 @@ async fn search_users(
     }
 
     let limit = query.limit.unwrap_or(10).clamp(1, 50);
-    let pattern = format!("%{}%", query.q);
+    // Escape LIKE wildcards so user input can't broaden the match
+    let escaped = query
+        .q
+        .replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_");
+    let pattern = format!("%{}%", escaped);
 
     let mut conn = state.pool.get().await?;
 
     let users = users::table
-        .filter(users::id.ne(user_id as i64))
+        .filter(users::id.ne(user_id))
         .filter(users::name.ilike(pattern))
         .select((users::id, users::name, users::profile_picture))
         .limit(limit)
@@ -214,6 +347,7 @@ async fn search_users(
 #[cfg(test)]
 mod tests {
     use crate::models::user::{UserPutPayload, UserUpdatePayload};
+    use crate::test_secrets::{TEST_EMAIL, TEST_NAME};
 
     #[tokio::test]
     async fn test_patch_me_validation() {
@@ -227,8 +361,8 @@ mod tests {
     #[tokio::test]
     async fn test_put_me_validation() {
         let payload = UserPutPayload {
-            name: "Test".to_string(),
-            email: "test@example.com".to_string(),
+            name: TEST_NAME.to_string(),
+            email: TEST_EMAIL.to_string(),
         };
         assert!(!payload.name.trim().is_empty());
     }
