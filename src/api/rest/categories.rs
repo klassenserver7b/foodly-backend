@@ -141,7 +141,7 @@ async fn create_category(
 async fn update_category(
     State(state): State<AppState>,
     Extension(user_id): Extension<i64>,
-    Path(id): Path<i32>,
+    Path(id): Path<i64>,
     Json(payload): Json<CreateCategory>,
 ) -> Result<Json<Category>, AppError> {
     if payload.name.is_empty() {
@@ -151,12 +151,11 @@ async fn update_category(
         return Err(AppError::Unprocessable("Color cannot be empty".into()));
     }
 
-    let c_id = i64::from(id);
     let u_id = user_id;
     let mut conn = state.pool.get().await?;
 
     let res = diesel::update(user_categories::table)
-        .filter(user_categories::id.eq(c_id))
+        .filter(user_categories::id.eq(id))
         .filter(user_categories::user_id.eq(u_id))
         .set((
             user_categories::name.eq(payload.name.clone()),
@@ -171,21 +170,20 @@ async fn update_category(
         return Err(AppError::NotFound("Category not found".into()));
     }
 
-    let category = fetch_category(&mut conn, c_id).await?;
+    let category = fetch_category(&mut conn, id).await?;
     Ok(Json(category))
 }
 
 async fn delete_category(
     State(state): State<AppState>,
     Extension(user_id): Extension<i64>,
-    Path(id): Path<i32>,
+    Path(id): Path<i64>,
 ) -> Result<axum::http::StatusCode, AppError> {
-    let c_id = i64::from(id);
     let u_id = user_id;
     let mut conn = state.pool.get().await?;
 
     let res = diesel::delete(user_categories::table)
-        .filter(user_categories::id.eq(c_id))
+        .filter(user_categories::id.eq(id))
         .filter(user_categories::user_id.eq(u_id))
         .execute(&mut conn)
         .await?;
@@ -205,7 +203,7 @@ const MAX_RECIPE_IDS: usize = 500;
 async fn update_category_recipes(
     State(state): State<AppState>,
     Extension(user_id): Extension<i64>,
-    Path(id): Path<i32>,
+    Path(id): Path<i64>,
     Json(payload): Json<UpdateCategoryRecipes>,
 ) -> Result<Json<Category>, AppError> {
     if payload.recipe_ids.len() > MAX_RECIPE_IDS {
@@ -214,14 +212,12 @@ async fn update_category_recipes(
         )));
     }
 
-    let c_id = i64::from(id);
-
     let u_id = user_id;
     let mut conn = state.pool.get().await?;
 
     // Verify category belongs to user
     let category_exists = user_categories::table
-        .filter(user_categories::id.eq(c_id))
+        .filter(user_categories::id.eq(id))
         .filter(user_categories::user_id.eq(u_id))
         .select(user_categories::id)
         .first::<i64>(&mut conn)
@@ -261,7 +257,7 @@ async fn update_category_recipes(
 
     // Delete existing mapping
     diesel::delete(user_category_recipes::table)
-        .filter(user_category_recipes::category_id.eq(c_id))
+        .filter(user_category_recipes::category_id.eq(id))
         .execute(&mut conn)
         .await?;
 
@@ -269,7 +265,7 @@ async fn update_category_recipes(
     for (i, r_id) in payload.recipe_ids.iter().enumerate() {
         diesel::insert_into(user_category_recipes::table)
             .values((
-                user_category_recipes::category_id.eq(c_id),
+                user_category_recipes::category_id.eq(id),
                 user_category_recipes::recipe_id.eq(*r_id),
                 user_category_recipes::position.eq(i as i32),
             ))
@@ -277,7 +273,7 @@ async fn update_category_recipes(
             .await?;
     }
 
-    let category = fetch_category(&mut conn, c_id).await?;
+    let category = fetch_category(&mut conn, id).await?;
     Ok(Json(category))
 }
 

@@ -96,9 +96,8 @@ macro_rules! recipe_cols {
 async fn get_recipe(
     State(state): State<AppState>,
     Extension(user_id): Extension<i64>,
-    Path(id): Path<i32>,
+    Path(r_id): Path<i64>,
 ) -> Result<Json<Recipe>, AppError> {
-    let r_id = i64::from(id);
     let u_id = user_id;
 
     let mut conn = state.pool.get().await?;
@@ -264,20 +263,19 @@ async fn create_recipe(
         })
         .await?;
 
-    get_recipe(State(state), Extension(user_id), Path(rec_id as i32)).await
+    get_recipe(State(state), Extension(user_id), Path(rec_id)).await
 }
 
 async fn update_recipe(
     State(state): State<AppState>,
     Extension(user_id): Extension<i64>,
-    Path(id): Path<i32>,
+    Path(r_id): Path<i64>,
     Json(payload): Json<CreateRecipe>,
 ) -> Result<Json<Recipe>, AppError> {
     if payload.name.is_empty() {
         return Err(AppError::Unprocessable("Name cannot be empty".into()));
     }
 
-    let r_id = i64::from(id);
     let u_id = user_id;
 
     let mut conn = state.pool.get().await?;
@@ -292,15 +290,14 @@ async fn update_recipe(
     })
     .await?;
 
-    get_recipe(State(state), Extension(user_id), Path(id)).await
+    get_recipe(State(state), Extension(user_id), Path(r_id)).await
 }
 
 async fn delete_recipe(
     State(state): State<AppState>,
     Extension(user_id): Extension<i64>,
-    Path(id): Path<i32>,
+    Path(r_id): Path<i64>,
 ) -> Result<axum::http::StatusCode, AppError> {
-    let r_id = i64::from(id);
     let u_id = user_id;
 
     let mut conn = state.pool.get().await?;
@@ -332,7 +329,7 @@ async fn delete_recipe(
 async fn copy_recipe(
     State(state): State<AppState>,
     Extension(user_id): Extension<i64>,
-    Path(id): Path<i32>,
+    Path(id): Path<i64>,
 ) -> Result<Json<Recipe>, AppError> {
     let original = get_recipe(State(state.clone()), Extension(user_id), Path(id))
         .await?

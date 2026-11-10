@@ -280,6 +280,8 @@ Resolve a set of user ids to compact display data in a single request. The front
 
 Malformed segments are **dropped silently** (`ids=1,abc,3` → `[1, 3]`). A missing or empty `ids` parameter returns an empty list rather than an error.
 
+**Bound:** at most **100** ids per request (`422 Unprocessable` beyond that).
+
 **Response `200 OK`:**
 ```json
 {
@@ -294,6 +296,7 @@ Malformed segments are **dropped silently** (`ids=1,abc,3` → `[1, 3]`). A miss
 
 **Errors:**
 - `401 Unauthorized` — missing/invalid access token.
+- `422 Unprocessable` — more than 100 ids in the request.
 
 ---
 
@@ -688,6 +691,8 @@ Delete a category. Recipes in it are **not** deleted; they become uncategorized.
 
 Set the ordered list of recipe IDs in this category (replaces the current list).
 
+**Bound:** at most **500** recipe IDs per request (`422 Unprocessable` beyond that).
+
 **Request:**
 ```json
 {
@@ -703,7 +708,7 @@ Set the ordered list of recipe IDs in this category (replaces the current list).
 ```
 
 **Errors:**
-- `422 Unprocessable` — recipe IDs that the user doesn't have access to.
+- `422 Unprocessable` — recipe IDs that the user doesn't have access to, or more than 500 recipe IDs in the request.
 
 ---
 

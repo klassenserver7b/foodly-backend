@@ -359,8 +359,13 @@ async fn bulk_get_users(
         .unwrap_or_default()
         .split(',')
         .filter_map(|segment| segment.trim().parse::<i64>().ok())
-        .take(MAX_IDS)
         .collect();
+
+    if ids.len() > MAX_IDS {
+        return Err(AppError::Unprocessable(format!(
+            "ids accepts at most {MAX_IDS} entries"
+        )));
+    }
 
     if ids.is_empty() {
         return Ok(Json(UserSearchResponse { data: vec![] }));
