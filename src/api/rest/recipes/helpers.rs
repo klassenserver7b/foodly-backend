@@ -11,6 +11,29 @@ use crate::schema::{
     steps,
 };
 
+/// Upper bound on ingredients summed across all sections of a recipe.
+///
+/// Ingredient lists used to be inserted one row per statement; an unbounded
+/// list meant tens of thousands of sequential round-trips inside a single
+/// transaction. The batch insert below removes that cost, and this cap keeps
+/// the statement size itself bounded.
+pub(super) const MAX_RECIPE_ITEMS: usize = 1000;
+
+/// Rejects payloads whose combined ingredient count exceeds [`MAX_RECIPE_ITEMS`].
+pub(super) fn validate_recipe_limits(payload: &CreateRecipe) -> Result<(), AppError> {
+    let total: usize = payload
+        .sections
+        .iter()
+        .map(|section| section.ingredients.len())
+        .sum();
+    if total > MAX_RECIPE_ITEMS {
+        return Err(AppError::Unprocessable(format!(
+            "sections accept at most {MAX_RECIPE_ITEMS} ingredients in total"
+        )));
+    }
+    Ok(())
+}
+
 pub(super) async fn insert_section(
     sec: CreateSection,
     r_id: i64,
@@ -46,23 +69,34 @@ pub(super) async fn insert_section(
             .await?;
     }
 
-    for (i_pos, ing) in sec.ingredients.into_iter().enumerate() {
+    for ing in &sec.ingredients {
         if !ing.is_valid() {
             return Err(AppError::Unprocessable(format!(
                 "Invalid ingredient: {ing:?}"
             )));
         }
+    }
 
+    if !sec.ingredients.is_empty() {
+        // One multi-row statement: a single round-trip regardless of item count.
+        let values: Vec<_> = sec
+            .ingredients
+            .iter()
+            .enumerate()
+            .map(|(i_pos, ing)| {
+                (
+                    recipe_ingredients::section_id.eq(sec_id),
+                    recipe_ingredients::ingredient_id.eq(ing.ingredient),
+                    recipe_ingredients::text.eq(ing.text.clone()),
+                    recipe_ingredients::amount.eq(ing.amount.clone()),
+                    recipe_ingredients::amount_prefix.eq(ing.amount_prefix.clone()),
+                    recipe_ingredients::unit.eq(ing.unit.clone()),
+                    recipe_ingredients::position.eq(i_pos as i32),
+                )
+            })
+            .collect();
         diesel::insert_into(recipe_ingredients::table)
-            .values((
-                recipe_ingredients::section_id.eq(sec_id),
-                recipe_ingredients::ingredient_id.eq(ing.ingredient),
-                recipe_ingredients::text.eq(ing.text),
-                recipe_ingredients::amount.eq(ing.amount),
-                recipe_ingredients::amount_prefix.eq(ing.amount_prefix),
-                recipe_ingredients::unit.eq(ing.unit),
-                recipe_ingredients::position.eq(i_pos as i32),
-            ))
+            .values(&values)
             .execute(conn)
             .await?;
     }

@@ -29,8 +29,13 @@ List endpoints that can grow unbounded (like recipes) use **offset-based paginat
 
 | Parameter | Type             | Default | Description                                                        |
 |-----------|------------------|---------|--------------------------------------------------------------------|
-| `page`    | `integer`        | `1`     | The page number to fetch (1-indexed).                              |
+| `page`    | `integer`        | `1`     | The page number to fetch (1-indexed). Server clamps to `1..=10000`. |
 | `limit`   | `integer`        | `20`    | Max items per page (server caps at 100).                           |
+
+Values outside those ranges are clamped rather than rejected, so an
+out-of-range page yields an empty list instead of an error. Because the offset
+is `(page - 1) * limit`, the page ceiling keeps deep-OFFSET scans bounded and
+prevents integer overflow in the offset computation.
 
 Response wrapper:
 
@@ -50,7 +55,7 @@ All error responses use:
 ```json
 {
   "error": {
-    "code": "RECIPE_NOT_FOUND",
+    "code": "NOT_FOUND",
     "message": "Recipe with id 42 does not exist."
   }
 }
@@ -307,8 +312,8 @@ Malformed segments are **dropped silently** (`ids=1,abc,3` → `[1, 3]`). A miss
 Fetch a paginated list of all recipes accessible to the authenticated user. This is a fast, highly-cacheable endpoint designed for the initial catalog load. It internally uses the same logic as the search endpoint but accepts only pagination parameters in the query string.
 
 **Query parameters:**
-- `page` (integer, default: 1)
-- `limit` (integer, default: 20)
+- `page` (integer, default: 1, max: 10_000)
+- `limit` (integer, default: 20, max: 100)
 
 **Response `200 OK`:** *(Returns the same paginated `RecipePreview` list structure as `POST /api/v1/recipes/search`)*
 
@@ -319,8 +324,8 @@ Fetch a paginated list of all recipes accessible to the authenticated user. This
 Search and list recipes accessible to the authenticated user (owned + shared as editor/viewer). Allows filtering by tags, categories, ingredients, max work time, access rights, and share states. Also supports dynamic sorting (e.g. by rating, name, total time) and uses offset-based pagination. Returns **preview data** — a subset of fields optimized for the list view. Sections, ingredients, steps, and notes are **not** included. If the request body is omitted or empty (`{}`), it behaves identically to a fetch-all endpoint.
 
 **Query parameters:**
-- `page` (integer, default: 1)
-- `limit` (integer, default: 20)
+- `page` (integer, default: 1, max: 10_000)
+- `limit` (integer, default: 20, max: 100)
 
 **Request:**
 ```json
@@ -339,7 +344,7 @@ Search and list recipes accessible to the authenticated user (owned + shared as 
   }
 }
 ```
-*(All fields are optional. Filters use strict AND logic where arrays are provided.)*
+*(All fields are optional. Filters use strict AND logic where arrays are provided. The ID/string filter arrays (`categories`, `tags`, `ingredients`) accept at most **100** entries; the enum filter arrays (`accessRights`, `shareStates`) accept at most **10** entries (duplicates are deduped and there are only three variants each). Requests exceeding a cap are rejected with `422 Unprocessable` (`"categories accepts at most 100 entries"`, `"accessRights accepts at most 10 entries"`, etc.).)*
 
 **Response `200 OK`:**
 ```json

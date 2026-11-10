@@ -351,14 +351,22 @@ async fn bulk_get_users(
 ) -> Result<Json<UserSearchResponse>, AppError> {
     // Cap at 100 ids to keep the `IN` list bounded.
     const MAX_IDS: usize = 100;
+    // 2048 bytes comfortably fits 100 ids, and bounds the split/parse work.
+    const MAX_IDS_BYTES: usize = 2048;
+
+    let raw_ids = query.ids.as_deref().unwrap_or_default();
 
     // Malformed segments are dropped silently: `ids=1,abc,3` → `[1, 3]`.
+    // `take(MAX_IDS + 1)` alone does not bound the work: segments that fail to
+    // parse are filtered out rather than counted, so an all-malformed value
+    // would be split and parsed end to end. Cap the raw bytes first.
+    if raw_ids.len() > MAX_IDS_BYTES {
+        return Err(AppError::Unprocessable("ids parameter too long".into()));
+    }
+
     // Stop one past the cap so an oversized `ids` value is rejected without
     // parsing/allocating the whole (potentially huge) query string.
-    let ids: Vec<i64> = query
-        .ids
-        .as_deref()
-        .unwrap_or_default()
+    let ids: Vec<i64> = raw_ids
         .split(',')
         .filter_map(|segment| segment.trim().parse::<i64>().ok())
         .take(MAX_IDS + 1)

@@ -1,4 +1,4 @@
-use crate::api::rest::recipes::{PaginatedResponse, PaginationQuery};
+use crate::api::rest::recipes::{MAX_PAGE, PaginatedResponse, PaginationQuery};
 use crate::models::category::{
     Category, CategoryOrderPair, CategoryOrderResponse, CreateCategory, ReorderCategories,
     UpdateCategoryRecipes,
@@ -48,7 +48,7 @@ async fn list_categories(
 ) -> Result<Json<PaginatedResponse<Category>>, AppError> {
     let u_id = user_id;
     let limit = pagination.limit.unwrap_or(20).min(100);
-    let page = pagination.page.unwrap_or(1).max(1);
+    let page = pagination.page.unwrap_or(1).clamp(1, MAX_PAGE);
     let offset = (page - 1) * limit;
 
     let mut conn = state.pool.get().await?;
@@ -75,29 +75,51 @@ async fn list_categories(
         records.pop();
     }
 
-    let mut data = Vec::with_capacity(records.len());
-    for rec in records {
-        // Fetch recipes for this category
-        let recipes: Vec<i64> = user_category_recipes::table
-            .filter(user_category_recipes::category_id.eq(rec.0))
-            .order(user_category_recipes::position.asc())
-            .select(user_category_recipes::recipe_id)
+    // Load the recipes of every category on this page in one round-trip and
+    // group them in memory, instead of one SELECT per category.
+    let category_ids: Vec<i64> = records.iter().map(|r| r.0).collect();
+    let mut recipes_by_category: std::collections::HashMap<i64, Vec<i64>> =
+        std::collections::HashMap::with_capacity(category_ids.len());
+
+    if !category_ids.is_empty() {
+        let rows: Vec<(i64, i64)> = user_category_recipes::table
+            .filter(user_category_recipes::category_id.eq_any(&category_ids))
+            .order_by((
+                user_category_recipes::category_id.asc(),
+                user_category_recipes::position.asc(),
+            ))
+            .select((
+                user_category_recipes::category_id,
+                user_category_recipes::recipe_id,
+            ))
             .load(&mut conn)
             .await?;
 
-        data.push(Category {
+        for (category_id, recipe_id) in rows {
+            recipes_by_category
+                .entry(category_id)
+                .or_default()
+                .push(recipe_id);
+        }
+    }
+
+    let data = records
+        .into_iter()
+        .map(|rec| Category {
             id: rec.0,
             user: rec.1,
             name: rec.2.clone(),
-            recipes,
+            recipes: recipes_by_category.remove(&rec.0).unwrap_or_default(),
             order: rec.3.unwrap_or(0),
             color: rec.4.clone(),
             color_light: rec.5.clone(),
             color_dark: rec.6.clone(),
-        });
-    }
+        })
+        .collect();
 
-    let cursor = if has_more {
+    // Stop emitting cursors at the page ceiling, otherwise a client following
+    // them would be pinned to the last allowed page and loop forever.
+    let cursor = if has_more && page < MAX_PAGE {
         Some((page + 1).to_string())
     } else {
         None
@@ -237,36 +259,38 @@ async fn update_category_recipes(
         return Err(AppError::NotFound("Category not found".into()));
     }
 
-    // Verify user has access to all recipes (owner, editor, or viewer)
-    if !payload.recipe_ids.is_empty() {
-        let r_ids: Vec<i64> = payload.recipe_ids.to_vec();
-
-        let count = diesel::sql_query(
-            r"
-            SELECT COUNT(DISTINCT r.id) AS count
-            FROM recipes r
-            LEFT JOIN recipe_editors e ON r.id = e.recipe_id
-            LEFT JOIN recipe_viewers v ON r.id = v.recipe_id
-            WHERE r.id = ANY($1)
-              AND (r.owner_id = $2 OR e.user_id = $2 OR v.user_id = $2)
-            ",
-        )
-        .bind::<diesel::sql_types::Array<diesel::sql_types::BigInt>, _>(&r_ids)
-        .bind::<diesel::sql_types::BigInt, _>(u_id)
-        .get_result::<CountRow>(&mut conn)
-        .await?;
-
-        if count.count != r_ids.len() as i64 {
-            return Err(AppError::Unprocessable(
-                "One or more recipes not accessible".into(),
-            ));
-        }
-    }
-
     // Replace the mapping atomically: a failure between DELETE and INSERT
     // must not leave the category emptied.
     let category = conn
         .transaction::<_, AppError, _>(async |conn| {
+            // Verify user has access to all recipes (owner, editor, or viewer).
+            // Must run inside this transaction so a share revoked concurrently
+            // cannot slip a mapping row in between the check and the INSERT.
+            if !payload.recipe_ids.is_empty() {
+                let r_ids: Vec<i64> = payload.recipe_ids.to_vec();
+
+                let count = diesel::sql_query(
+                    r"
+                    SELECT COUNT(DISTINCT r.id) AS count
+                    FROM recipes r
+                    LEFT JOIN recipe_editors e ON r.id = e.recipe_id
+                    LEFT JOIN recipe_viewers v ON r.id = v.recipe_id
+                    WHERE r.id = ANY($1)
+                      AND (r.owner_id = $2 OR e.user_id = $2 OR v.user_id = $2)
+                    ",
+                )
+                .bind::<diesel::sql_types::Array<diesel::sql_types::BigInt>, _>(&r_ids)
+                .bind::<diesel::sql_types::BigInt, _>(u_id)
+                .get_result::<CountRow>(conn)
+                .await?;
+
+                if count.count != r_ids.len() as i64 {
+                    return Err(AppError::Unprocessable(
+                        "One or more recipes not accessible".into(),
+                    ));
+                }
+            }
+
             diesel::delete(user_category_recipes::table)
                 .filter(user_category_recipes::category_id.eq(id))
                 .execute(conn)

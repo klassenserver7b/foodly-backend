@@ -19,7 +19,7 @@ use diesel::result::OptionalExtension;
 use diesel::sql_types::Bool;
 use diesel_async::{AsyncConnection, RunQueryDsl};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::schema::{
     images, recipe_editors, recipe_images, recipe_tags, recipe_viewers, recipes,
@@ -59,6 +59,11 @@ pub fn router() -> Router<AppState> {
         )
         .route("/{id}/copy", post(copy_recipe))
 }
+
+/// Hard ceiling for the `page` query parameter. `offset = (page - 1) * limit`
+/// walks and discards every skipped row, so an unbounded page is a cheap DoS
+/// lever — and `page = i64::MAX` would overflow the offset computation.
+pub const MAX_PAGE: i64 = 10_000;
 
 #[derive(Deserialize)]
 pub struct PaginationQuery {
@@ -229,6 +234,7 @@ async fn create_recipe(
     if payload.name.is_empty() {
         return Err(AppError::Unprocessable("Name cannot be empty".into()));
     }
+    helpers::validate_recipe_limits(&payload)?;
 
     let u_id = user_id;
     let mut conn = state.pool.get().await?;
@@ -275,6 +281,7 @@ async fn update_recipe(
     if payload.name.is_empty() {
         return Err(AppError::Unprocessable("Name cannot be empty".into()));
     }
+    helpers::validate_recipe_limits(&payload)?;
 
     let u_id = user_id;
 
@@ -368,18 +375,46 @@ fn nonempty<T>(opt: &Option<Vec<T>>) -> Option<&Vec<T>> {
 /// planning.
 const MAX_FILTER_VALUES: usize = 100;
 
+/// Upper bound for the enum filter arrays (`accessRights`, `shareStates`).
+/// Each enum only has three variants, so anything beyond a few entries is
+/// redundant — and every entry would otherwise add a level to the OR-tree,
+/// which diesel walks (and drops) recursively.
+const MAX_ENUM_FILTER_VALUES: usize = 10;
+
 fn validate_filter_limits(filters: &RecipeFilters) -> Result<(), AppError> {
-    let check = |field: &str, len: Option<usize>| -> Result<(), AppError> {
-        if matches!(len, Some(n) if n > MAX_FILTER_VALUES) {
+    let check = |field: &str, len: Option<usize>, max: usize| -> Result<(), AppError> {
+        if matches!(len, Some(n) if n > max) {
             return Err(AppError::Unprocessable(format!(
-                "{field} accepts at most {MAX_FILTER_VALUES} entries"
+                "{field} accepts at most {max} entries"
             )));
         }
         Ok(())
     };
-    check("categories", filters.categories.as_ref().map(Vec::len))?;
-    check("tags", filters.tags.as_ref().map(Vec::len))?;
-    check("ingredients", filters.ingredients.as_ref().map(Vec::len))?;
+    check(
+        "categories",
+        filters.categories.as_ref().map(Vec::len),
+        MAX_FILTER_VALUES,
+    )?;
+    check(
+        "tags",
+        filters.tags.as_ref().map(Vec::len),
+        MAX_FILTER_VALUES,
+    )?;
+    check(
+        "ingredients",
+        filters.ingredients.as_ref().map(Vec::len),
+        MAX_FILTER_VALUES,
+    )?;
+    check(
+        "accessRights",
+        filters.access_rights.as_ref().map(Vec::len),
+        MAX_ENUM_FILTER_VALUES,
+    )?;
+    check(
+        "shareStates",
+        filters.share_states.as_ref().map(Vec::len),
+        MAX_ENUM_FILTER_VALUES,
+    )?;
     Ok(())
 }
 
@@ -391,7 +426,7 @@ async fn fetch_recipes(
 ) -> Result<PaginatedResponse<RecipePreview>, AppError> {
     let u_id = user_id;
     let limit = pagination.limit.unwrap_or(20).min(100);
-    let page = pagination.page.unwrap_or(1).max(1);
+    let page = pagination.page.unwrap_or(1).clamp(1, MAX_PAGE);
     let offset = (page - 1) * limit;
 
     // Reject oversized filter arrays before building the (EXISTS-per-value) SQL.
@@ -416,7 +451,10 @@ async fn fetch_recipes(
             let mut or_cond: Cond = Box::new(diesel::dsl::sql::<Bool>("1=0"));
 
             if let Some(accs) = nonempty(&f.access_rights) {
-                for a in accs {
+                // Dedupe: every entry nests the OR-tree one level deeper, and
+                // diesel walks that tree recursively.
+                let mut seen = HashSet::new();
+                for a in accs.iter().filter(|a| seen.insert(*a)) {
                     let branch: Cond = match a {
                         RecipeAccessRights::Owner => Box::new(recipes::owner_id.eq(u_id)),
                         RecipeAccessRights::Editor => Box::new(diesel::dsl::exists(
@@ -435,7 +473,8 @@ async fn fetch_recipes(
             }
 
             if let Some(shs) = nonempty(&f.share_states) {
-                for s in shs {
+                let mut seen = HashSet::new();
+                for s in shs.iter().filter(|s| seen.insert(*s)) {
                     let branch: Cond = match s {
                         RecipeShareState::Private => Box::new(
                             recipes::owner_id
@@ -735,7 +774,9 @@ async fn fetch_recipes(
         });
     }
 
-    let cursor = if has_more {
+    // Stop emitting cursors at the page ceiling, otherwise a client following
+    // them would be pinned to the last allowed page and loop forever.
+    let cursor = if has_more && page < MAX_PAGE {
         Some((page + 1).to_string())
     } else {
         None

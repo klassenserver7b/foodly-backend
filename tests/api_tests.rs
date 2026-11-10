@@ -193,6 +193,46 @@ async fn test_create_recipe_http() {
     assert_eq!(json["name"].as_str().unwrap(), "Integration Recipe");
 }
 
+/// Ingredient lists are capped so a single recipe body cannot trigger a
+/// huge multi-row insert (previously one round-trip per ingredient).
+#[tokio::test]
+async fn test_create_recipe_rejects_too_many_ingredients() {
+    let app = app(test_state().await);
+    let (token, _) = register_test_user(&app, "Bulk User", "bulk@example.com", "password123").await;
+
+    // 1001 ingredients — one more than MAX_RECIPE_ITEMS.
+    let ingredients: Vec<Value> = (0..=1000)
+        .map(|i| serde_json::json!({ "text": format!("ingredient {i}") }))
+        .collect();
+
+    let payload = serde_json::json!({
+        "name": "Huge Recipe",
+        "sections": [{ "name": null, "ingredients": ingredients, "steps": [] }]
+    });
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/recipes")
+                .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(serde_json::to_vec(&payload).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(
+        json["error"]["message"], "sections accept at most 1000 ingredients in total",
+        "over-cap ingredient list must be rejected with a clear message"
+    );
+}
+
 // ─── Auth tests ─────────────────────────────────────────────────────────
 
 /// Helper: register a user and return (access_token, refresh_token).
@@ -791,6 +831,34 @@ async fn bulk_users(app: &axum::Router, token: &str, ids: &str) -> Value {
 }
 
 #[tokio::test]
+async fn test_bulk_get_users_rejects_too_many_ids() {
+    let app = app(test_state().await);
+    let (token, _) = register_test_user(&app, "Owner", "owner@example.com", "password123").await;
+
+    // One more than MAX_IDS (100).
+    let ids: Vec<String> = (1..=101).map(|i| i.to_string()).collect();
+    let query = ids.join(",");
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri(format!("/api/v1/users?ids={query}"))
+                .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["error"]["message"], "ids accepts at most 100 entries");
+}
+
+#[tokio::test]
 async fn test_bulk_get_users() {
     let app = app(test_state().await);
 
@@ -852,6 +920,31 @@ async fn test_bulk_get_users_empty_ids() {
 
     let json = bulk_users(&app, &token, "").await;
     assert_eq!(json["data"].as_array().unwrap().len(), 0);
+}
+
+#[tokio::test]
+async fn test_bulk_get_users_rejects_oversized_ids() {
+    let app = app(test_state().await);
+    let (token, _) = register_test_user(&app, "User A", "a@example.com", "password123").await;
+
+    // All-malformed segments used to bypass the entry cap and force a full
+    // split/parse of the raw string; the byte cap must reject it up front.
+    let ids = vec!["abc"; 2000].join(",");
+    assert!(ids.len() > 2048);
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/v1/users?ids={ids}"))
+                .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
 }
 
 // ─── Recipe access-since (issue #14) ────────────────────────────────────
@@ -1204,6 +1297,130 @@ async fn test_update_category_recipes_rejects_too_many_ids() {
     );
 }
 
+/// `page` is clamped server-side: an absurd page must not overflow the offset
+/// computation or trigger an unbounded deep OFFSET scan.
+#[tokio::test]
+async fn test_listing_clamps_absurd_page() {
+    let app = app(test_state().await);
+    let (token, _) = register_test_user(&app, "Test User", "test@example.com", "password123").await;
+    create_test_category(&app, &token, "Breakfast").await;
+
+    for uri in [
+        "/api/v1/categories?page=9223372036854775807&limit=100",
+        "/api/v1/recipes?page=9223372036854775807&limit=100",
+        "/api/v1/categories?page=1000000000&limit=100",
+        "/api/v1/recipes?page=1000000000&limit=100",
+    ] {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(uri)
+                    .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK, "{uri} must not error");
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        let json: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(
+            json["data"].as_array().map(Vec::len),
+            Some(0),
+            "{uri} is past the end of the data and must return an empty page"
+        );
+    }
+}
+
+/// Listing categories must hydrate each category's recipes in one batched
+/// query — and keep the per-category position ordering intact.
+#[tokio::test]
+async fn test_list_categories_hydrates_recipes_per_category() {
+    let app = app(test_state().await);
+    let (token, _) = register_test_user(&app, "Test User", "test@example.com", "password123").await;
+
+    let breakfast = create_test_category(&app, &token, "Breakfast").await;
+    let dinner = create_test_category(&app, &token, "Dinner").await;
+    let breakfast_id = breakfast["id"].as_i64().unwrap();
+    let dinner_id = dinner["id"].as_i64().unwrap();
+
+    let r1 = create_test_recipe(&app, &token, "Porridge").await["id"]
+        .as_i64()
+        .unwrap();
+    let r2 = create_test_recipe(&app, &token, "Pancakes").await["id"]
+        .as_i64()
+        .unwrap();
+    let r3 = create_test_recipe(&app, &token, "Stew").await["id"]
+        .as_i64()
+        .unwrap();
+
+    // Assign in reverse order so the position column (not the id) decides.
+    for (category_id, recipe_ids) in [
+        (breakfast_id, serde_json::json!([r2, r1])),
+        (dinner_id, serde_json::json!([r3])),
+    ] {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri(format!("/api/v1/categories/{category_id}/recipes"))
+                    .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::to_vec(&serde_json::json!({ "recipeIds": recipe_ids }))
+                            .unwrap(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            response.status(),
+            StatusCode::OK,
+            "recipe assignment failed"
+        );
+    }
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/categories")
+                .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: Value = serde_json::from_slice(&body).unwrap();
+
+    let recipes_of = |id: i64| -> Vec<i64> {
+        json["data"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|c| c["id"].as_i64() == Some(id))
+            .unwrap_or_else(|| panic!("category {id} missing from listing"))["recipes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_i64().unwrap())
+            .collect()
+    };
+
+    assert_eq!(
+        recipes_of(breakfast_id),
+        vec![r2, r1],
+        "recipes must be grouped per category and sorted by position"
+    );
+    assert_eq!(recipes_of(dinner_id), vec![r3]);
+}
+
 /// Filter arrays build one `EXISTS` sub-select (and bind parameter) per value,
 /// so they must be capped to keep the statement inside Postgres' limits.
 #[tokio::test]
@@ -1235,5 +1452,39 @@ async fn test_recipe_search_rejects_too_many_filter_values() {
     assert_eq!(
         json["error"]["message"], "categories accepts at most 100 entries",
         "over-cap filter array must be rejected with a clear message"
+    );
+}
+
+/// Enum filter arrays left-nest one OR per entry; diesel walks that tree
+/// recursively, so a huge `accessRights` array would overflow the stack.
+#[tokio::test]
+async fn test_recipe_search_rejects_too_many_access_rights() {
+    let app = app(test_state().await);
+    let (token, _) = register_test_user(&app, "Owner", "owner@example.com", "password123").await;
+
+    // 101 entries — one more than MAX_FILTER_VALUES and far above the enum cap.
+    let too_many: Vec<&str> = (0..101).map(|_| "owner").collect();
+    let payload = serde_json::json!({ "filters": { "accessRights": too_many } });
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/recipes/search")
+                .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(serde_json::to_vec(&payload).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(
+        json["error"]["message"], "accessRights accepts at most 10 entries",
+        "over-cap enum filter array must be rejected with a clear message"
     );
 }
