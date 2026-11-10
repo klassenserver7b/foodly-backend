@@ -575,14 +575,14 @@ async fn fetch_recipes(
                     q = q.then_order_by(recipes::name.asc().nulls_last());
                 }
             }
-            "worktime" | "work_time" => {
+            "workTime" | "work_time" => {
                 if desc {
                     q = q.then_order_by(recipes::work_minutes.desc().nulls_last());
                 } else {
                     q = q.then_order_by(recipes::work_minutes.asc().nulls_last());
                 }
             }
-            "totaltime" | "total_time" => {
+            "totalTime" | "total_time" => {
                 if desc {
                     q = q.then_order_by(recipes::overall_minutes.desc().nulls_last());
                 } else {
@@ -596,7 +596,7 @@ async fn fetch_recipes(
                     "(SELECT COALESCE(AVG(rating), 0.0) FROM user_ratings WHERE recipe_id = recipes.id) {dir} NULLS LAST"
                 )));
             }
-            "access_since" | "accessSince" => {
+            "accessSince" => {
                 // Mirrors the per-row `myAccessSince` computation: owner uses
                 // the recipe's creation time, everyone else their join-table
                 // `added_at` (editor before viewer).

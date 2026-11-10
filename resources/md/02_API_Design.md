@@ -339,7 +339,7 @@ Search and list recipes accessible to the authenticated user (owned + shared as 
     "shareStates": ["private", "shared", "collaborative"]
   },
   "sort": {
-    "field": "rating", // "name", "work_time", "total_time", "rating", "accessSince"
+    "field": "rating", // "name", "workTime", "totalTime", "rating", "accessSince"
     "order": "desc"    // "asc", "desc"
   }
 }

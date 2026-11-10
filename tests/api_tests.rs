@@ -1114,7 +1114,7 @@ async fn test_recipe_my_access_since_shared() {
     }
 }
 
-/// `sort.field = "access_since"` is accepted and preserves the usual
+/// `sort.field = "accessSince"` is accepted and preserves the usual
 /// visibility-scoped result set.
 #[tokio::test]
 async fn test_recipe_search_sort_by_access_since() {
@@ -1125,7 +1125,7 @@ async fn test_recipe_search_sort_by_access_since() {
     let second = create_test_recipe(&app, &token, "Second Recipe").await;
 
     let payload = serde_json::json!({
-        "sort": { "field": "access_since", "order": "desc" }
+        "sort": { "field": "accessSince", "order": "desc" }
     });
 
     let response = app
