@@ -353,12 +353,15 @@ async fn bulk_get_users(
     const MAX_IDS: usize = 100;
 
     // Malformed segments are dropped silently: `ids=1,abc,3` → `[1, 3]`.
+    // Stop one past the cap so an oversized `ids` value is rejected without
+    // parsing/allocating the whole (potentially huge) query string.
     let ids: Vec<i64> = query
         .ids
         .as_deref()
         .unwrap_or_default()
         .split(',')
         .filter_map(|segment| segment.trim().parse::<i64>().ok())
+        .take(MAX_IDS + 1)
         .collect();
 
     if ids.len() > MAX_IDS {

@@ -620,6 +620,13 @@ Categories are **per-user** — each user has their own set. The authenticated u
 
 List all categories of the authenticated user, ordered by `order`.
 
+**Query parameters:**
+
+| Parameter | Type     | Required | Description                                                        |
+|-----------|----------|----------|--------------------------------------------------------------------|
+| `page`    | `int`    | no       | 1-based page number (default: `1`).                                |
+| `limit`   | `int`    | no       | Page size (default: `20`, max: `100`).                             |
+
 **Response `200 OK`:**
 ```json
 {
@@ -634,9 +641,12 @@ List all categories of the authenticated user, ordered by `order`.
       "colorLight": null,
       "colorDark": null
     }
-  ]
+  ],
+  "cursor": "2"
 }
 ```
+
+> `cursor` is the next `page` number when more data is available, otherwise `null`. Pass it back as `page` to fetch the next page.
 
 ---
 

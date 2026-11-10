@@ -1203,3 +1203,37 @@ async fn test_update_category_recipes_rejects_too_many_ids() {
         "over-cap payload must be rejected with a clear message"
     );
 }
+
+/// Filter arrays build one `EXISTS` sub-select (and bind parameter) per value,
+/// so they must be capped to keep the statement inside Postgres' limits.
+#[tokio::test]
+async fn test_recipe_search_rejects_too_many_filter_values() {
+    let app = app(test_state().await);
+    let (token, _) = register_test_user(&app, "Owner", "owner@example.com", "password123").await;
+
+    // 101 values — one more than MAX_FILTER_VALUES.
+    let too_many: Vec<i64> = (1..=101).collect();
+    let payload = serde_json::json!({ "filters": { "categories": too_many } });
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/recipes/search")
+                .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(serde_json::to_vec(&payload).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(
+        json["error"]["message"], "categories accepts at most 100 entries",
+        "over-cap filter array must be rejected with a clear message"
+    );
+}

@@ -11,7 +11,7 @@ use axum::{
 };
 use diesel::prelude::*;
 use diesel::result::OptionalExtension;
-use diesel_async::{AsyncPgConnection, RunQueryDsl};
+use diesel_async::{AsyncConnection, AsyncPgConnection, RunQueryDsl};
 
 use crate::schema::user_categories;
 use crate::schema::user_category_recipes;
@@ -22,6 +22,15 @@ use crate::schema::user_category_recipes;
 struct CountRow {
     #[diesel(sql_type = diesel::sql_types::BigInt)]
     count: i64,
+}
+
+/// Row shape for the bulk reorder `UPDATE ... RETURNING` query.
+#[derive(Debug, QueryableByName)]
+struct ReorderedRow {
+    #[diesel(sql_type = diesel::sql_types::BigInt)]
+    id: i64,
+    #[diesel(sql_type = diesel::sql_types::Integer)]
+    sort_order: i32,
 }
 
 pub fn router() -> Router<AppState> {
@@ -195,9 +204,8 @@ async fn delete_category(
     Ok(axum::http::StatusCode::NO_CONTENT)
 }
 
-/// Upper bound on the recipe IDs accepted in one update request. The
-/// handler issues one INSERT per recipe, so an unbounded list would let
-/// a single request monopolize a DB connection.
+/// Upper bound on the recipe IDs accepted in one update request, keeping the
+/// single bulk INSERT's statement size bounded.
 const MAX_RECIPE_IDS: usize = 500;
 
 async fn update_category_recipes(
@@ -255,32 +263,43 @@ async fn update_category_recipes(
         }
     }
 
-    // Delete existing mapping
-    diesel::delete(user_category_recipes::table)
-        .filter(user_category_recipes::category_id.eq(id))
-        .execute(&mut conn)
+    // Replace the mapping atomically: a failure between DELETE and INSERT
+    // must not leave the category emptied.
+    let category = conn
+        .transaction::<_, AppError, _>(async |conn| {
+            diesel::delete(user_category_recipes::table)
+                .filter(user_category_recipes::category_id.eq(id))
+                .execute(conn)
+                .await?;
+
+            let values: Vec<_> = payload
+                .recipe_ids
+                .iter()
+                .enumerate()
+                .map(|(i, r_id)| {
+                    (
+                        user_category_recipes::category_id.eq(id),
+                        user_category_recipes::recipe_id.eq(*r_id),
+                        user_category_recipes::position.eq(i as i32),
+                    )
+                })
+                .collect();
+
+            diesel::insert_into(user_category_recipes::table)
+                .values(&values)
+                .execute(conn)
+                .await?;
+
+            fetch_category(conn, id).await
+        })
         .await?;
 
-    // Insert new mapping
-    for (i, r_id) in payload.recipe_ids.iter().enumerate() {
-        diesel::insert_into(user_category_recipes::table)
-            .values((
-                user_category_recipes::category_id.eq(id),
-                user_category_recipes::recipe_id.eq(*r_id),
-                user_category_recipes::position.eq(i as i32),
-            ))
-            .execute(&mut conn)
-            .await?;
-    }
-
-    let category = fetch_category(&mut conn, id).await?;
     Ok(Json(category))
 }
 
 /// Upper bound on the category IDs accepted in one reorder request.
-/// The handler issues one UPDATE per ID, so an unbounded list lets a
-/// single authenticated request monopolize a pooled DB connection
-/// (and its memory) for minutes.
+/// The handler updates all rows in a single statement, so the cap keeps
+/// the statement (and its bound arrays) reasonably small.
 const MAX_REORDER_IDS: usize = 100;
 
 async fn reorder_categories(
@@ -296,23 +315,39 @@ async fn reorder_categories(
 
     let u_id = user_id;
     let mut conn = state.pool.get().await?;
-    let mut data = Vec::new();
 
-    for (i, cat_id) in payload.category_ids.iter().enumerate() {
-        let c_id = *cat_id;
-        let order = i as i32;
+    let ids: Vec<i64> = payload.category_ids;
+    let ords: Vec<i32> = (0..ids.len() as i32).collect();
 
-        let res = diesel::update(user_categories::table)
-            .filter(user_categories::id.eq(c_id))
-            .filter(user_categories::user_id.eq(u_id))
-            .set(user_categories::sort_order.eq(order))
-            .execute(&mut conn)
-            .await?;
+    // One round-trip instead of one UPDATE per category id. `unnest` turns the
+    // two bound arrays into the (id, ord) value list; every parameter is bound,
+    // so nothing user-controlled is interpolated into the SQL.
+    let mut rows = diesel::sql_query(
+        r"
+        UPDATE user_categories AS uc
+        SET sort_order = v.ord
+        FROM unnest($1::bigint[], $2::int[]) AS v(id, ord)
+        WHERE uc.id = v.id AND uc.user_id = $3
+        RETURNING uc.id, uc.sort_order
+        ",
+    )
+    .bind::<diesel::sql_types::Array<diesel::sql_types::BigInt>, _>(&ids)
+    .bind::<diesel::sql_types::Array<diesel::sql_types::Integer>, _>(&ords)
+    .bind::<diesel::sql_types::BigInt, _>(u_id)
+    .get_results::<ReorderedRow>(&mut conn)
+    .await?;
 
-        if res > 0 {
-            data.push(CategoryOrderPair { id: *cat_id, order });
-        }
-    }
+    // RETURNING has no defined row order; `sort_order` carries the payload
+    // position, so sorting by it restores the caller's ordering.
+    rows.sort_by_key(|row| row.sort_order);
+
+    let data = rows
+        .into_iter()
+        .map(|row| CategoryOrderPair {
+            id: row.id,
+            order: row.sort_order,
+        })
+        .collect();
 
     Ok(Json(CategoryOrderResponse { data }))
 }

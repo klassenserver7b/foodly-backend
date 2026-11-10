@@ -5,8 +5,8 @@
 mod helpers;
 
 use crate::models::recipe::{
-    CreateRecipe, ImageRef, Order, Recipe, RecipeAccessRights, RecipePreview, RecipeSearchQuery,
-    RecipeShareState,
+    CreateRecipe, ImageRef, Order, Recipe, RecipeAccessRights, RecipeFilters, RecipePreview,
+    RecipeSearchQuery, RecipeShareState,
 };
 use crate::{AppState, error::AppError};
 use axum::{
@@ -362,6 +362,27 @@ fn nonempty<T>(opt: &Option<Vec<T>>) -> Option<&Vec<T>> {
     opt.as_ref().filter(|v| !v.is_empty())
 }
 
+/// Upper bound for the AND-filter arrays (`categories`, `tags`, `ingredients`).
+/// Every value becomes its own `EXISTS` sub-select plus bind parameter, so an
+/// unbounded array can exceed Postgres' 65535-bind limit and blow up query
+/// planning.
+const MAX_FILTER_VALUES: usize = 100;
+
+fn validate_filter_limits(filters: &RecipeFilters) -> Result<(), AppError> {
+    let check = |field: &str, len: Option<usize>| -> Result<(), AppError> {
+        if matches!(len, Some(n) if n > MAX_FILTER_VALUES) {
+            return Err(AppError::Unprocessable(format!(
+                "{field} accepts at most {MAX_FILTER_VALUES} entries"
+            )));
+        }
+        Ok(())
+    };
+    check("categories", filters.categories.as_ref().map(Vec::len))?;
+    check("tags", filters.tags.as_ref().map(Vec::len))?;
+    check("ingredients", filters.ingredients.as_ref().map(Vec::len))?;
+    Ok(())
+}
+
 async fn fetch_recipes(
     state: &AppState,
     user_id: i64,
@@ -372,6 +393,11 @@ async fn fetch_recipes(
     let limit = pagination.limit.unwrap_or(20).min(100);
     let page = pagination.page.unwrap_or(1).max(1);
     let offset = (page - 1) * limit;
+
+    // Reject oversized filter arrays before building the (EXISTS-per-value) SQL.
+    if let Some(f) = &query.filters {
+        validate_filter_limits(f)?;
+    }
 
     let mut conn = state.pool.get().await?;
 
