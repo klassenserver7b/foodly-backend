@@ -105,3 +105,12 @@ Everything that is a widely used struct / function should have rustdoc. If you a
 ## Documentation
 - `resources/md` contains all docs and the current state of the project.
 If endpoints oder important decisions are changed, always update the docs to keep them aligned with the current codebase
+
+## Reviewing and Working as a model
+
+- If you have different agents:
+  - Try to split tasks into subtasks and dispatch one agent each
+  - Especially reviews shoudl be context free:
+     1.  use subagents for specialized reviews
+     2.  use an 'oracle' or yourself to collect / interpret the findings and plan fixes
+     3.  use fixer subagents to actually resolve the issues which were found 
