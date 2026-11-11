@@ -290,7 +290,8 @@ Search for users by name (or partial name) for use in "invite to recipe" or "add
 > The authenticated user (the one performing the search) is **excluded** from results — you don't invite yourself.
 
 **Errors:**
-- `422 Unprocessable` — `q` is missing or empty.
+- `400 Bad Request` — the `q` query parameter is missing entirely. Rejected by the axum `Query` extractor *before* the handler runs, so the body is the extractor's own message (`Failed to deserialize query string: missing field q`), not the usual error envelope.
+- `422 Unprocessable` — `q` is present but empty (`?q=`); the handler rejects it with `"q cannot be empty"`.
 
 ---
 
@@ -364,12 +365,12 @@ Search and list recipes accessible to the authenticated user (owned + shared as 
     "shareStates": ["private", "shared", "collaborative"]
   },
   "sort": {
-    "field": "rating", // "name", "workTime", "totalTime", "rating", "accessSince"
+    "field": "rating", // "name", "workTime" | "work_time", "totalTime" | "total_time", "rating", "accessSince"
     "order": "desc"    // "asc", "desc"
   }
 }
 ```
-*(All fields are optional. Filters use strict AND logic where arrays are provided. The ID/string filter arrays (`categories`, `tags`, `ingredients`) accept at most **100** entries; the enum filter arrays (`accessRights`, `shareStates`) accept at most **10** entries (duplicates are deduped and there are only three variants each). Requests exceeding a cap are rejected with `422 Unprocessable` (`"categories accepts at most 100 entries"`, `"accessRights accepts at most 10 entries"`, etc.).)*
+*(All fields are optional. Filters use strict AND logic where arrays are provided. The ID/string filter arrays (`categories`, `tags`, `ingredients`) accept at most **100** entries; the enum filter arrays (`accessRights`, `shareStates`) accept at most **10** entries (duplicates are deduped and there are only three variants each). Requests exceeding a cap are rejected with `422 Unprocessable` (`"categories accepts at most 100 entries"`, `"accessRights accepts at most 10 entries"`, etc.). Sort fields are case-sensitive; the snake_case spellings `work_time` and `total_time` are accepted as aliases of `workTime` and `totalTime`.)*
 
 **Response `200 OK`:**
 ```json
@@ -402,6 +403,12 @@ Search and list recipes accessible to the authenticated user (owned + shared as 
 > **Scope:** The backend **only returns recipes where the user is `owner`, `editor`, or `viewer`**. The frontend does not need to filter by access itself. The `cursor` in the response represents the next page number as a string, or `null` if there are no more pages.
 
 > **`myAccessSince`:** when the *requesting* user gained access to the recipe. For the `owner` it equals `createdAt`; for an `editor`/`viewer` it is the join-table `added_at` timestamp (editor wins if a user appears in both lists). Use it for "recently shared with you" ordering; `sort.field = "accessSince"` orders by the same value.
+
+**Errors:**
+- `400 Bad Request` — malformed query string (`page` / `limit` not integers), or a request body that is not valid JSON syntax. Both are rejected by the axum extractors before the handler runs.
+- `415 Unsupported Media Type` — a body was sent without `Content-Type: application/json`.
+- `401 Unauthorized` — missing/invalid access token.
+- `422 Unprocessable` — a filter array exceeds its cap (see above), a body field has the wrong type, or `sort.field` is not a known field. The sort error message lists the accepted spellings and repeats the rejected value, e.g. `sort.field must be one of name, workTime, work_time, totalTime, total_time, rating, accessSince (got "worktime")`. Unknown sort fields are rejected rather than silently falling back to ordering by id.
 
 ---
 
@@ -1160,6 +1167,7 @@ CORS_ALLOWED_ORIGINS=https://app.example.com
 | `GET`    | `/api/v1/users/search?q=...`          | yes  | Search users by name (invite dropdown)           |
 | `GET`    | `/api/v1/users?ids=2,3,5`             | yes  | Bulk user lookup (id → name/picture)             |
 | `GET`    | `/api/v1/recipes`                     | yes  | List recipes (preview, paginated)                |
+| `POST`   | `/api/v1/recipes/search`              | yes  | Search/filter/sort recipes (preview, paginated)  |
 | `GET`    | `/api/v1/recipes/:id`                 | yes  | Get full recipe                                  |
 | `POST`   | `/api/v1/recipes`                     | yes  | Create recipe                                    |
 | `PUT`    | `/api/v1/recipes/:id`                 | yes  | Update recipe                                    |

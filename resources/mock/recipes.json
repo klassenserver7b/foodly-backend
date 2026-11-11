@@ -184,16 +184,7 @@
         ]
       }
     ],
-    "rating": [
-      {
-        "user": 1,
-        "rating": 5
-      },
-      {
-        "user": 2,
-        "rating": 4
-      }
-    ]
+    "rating": []
   },
   {
     "id": 2,
@@ -329,12 +320,7 @@
         ]
       }
     ],
-    "rating": [
-      {
-        "user": 1,
-        "rating": 5
-      }
-    ]
+    "rating": []
   },
   {
     "id": 3,
@@ -420,12 +406,7 @@
         ]
       }
     ],
-    "rating": [
-      {
-        "user": 1,
-        "rating": 4
-      }
-    ]
+    "rating": []
   },
   {
     "id": 4,
@@ -632,16 +613,7 @@
         ]
       }
     ],
-    "rating": [
-      {
-        "user": 1,
-        "rating": 5
-      },
-      {
-        "user": 3,
-        "rating": 4
-      }
-    ]
+    "rating": []
   },
   {
     "id": 6,
@@ -774,16 +746,7 @@
         ]
       }
     ],
-    "rating": [
-      {
-        "user": 1,
-        "rating": 5
-      },
-      {
-        "user": 2,
-        "rating": 5
-      }
-    ]
+    "rating": []
   },
   {
     "id": 7,
@@ -945,16 +908,7 @@
         "steps": ["Reis gründlich kalt waschen.", "In der doppelten Menge Salzwasser nach Packungsangabe garen."]
       }
     ],
-    "rating": [
-      {
-        "user": 2,
-        "rating": 5
-      },
-      {
-        "user": 1,
-        "rating": 4
-      }
-    ]
+    "rating": []
   },
   {
     "id": 8,
@@ -1063,12 +1017,7 @@
         ]
       }
     ],
-    "rating": [
-      {
-        "user": 1,
-        "rating": 4
-      }
-    ]
+    "rating": []
   },
   {
     "id": 9,
@@ -1189,16 +1138,7 @@
         ]
       }
     ],
-    "rating": [
-      {
-        "user": 3,
-        "rating": 5
-      },
-      {
-        "user": 1,
-        "rating": 5
-      }
-    ]
+    "rating": []
   },
   {
     "id": 10,
@@ -1350,12 +1290,7 @@
         ]
       }
     ],
-    "rating": [
-      {
-        "user": 1,
-        "rating": 5
-      }
-    ]
+    "rating": []
   },
   {
     "id": 11,
@@ -1492,16 +1427,7 @@
         ]
       }
     ],
-    "rating": [
-      {
-        "user": 2,
-        "rating": 5
-      },
-      {
-        "user": 1,
-        "rating": 4
-      }
-    ]
+    "rating": []
   },
   {
     "id": 12,
@@ -1644,16 +1570,7 @@
         ]
       }
     ],
-    "rating": [
-      {
-        "user": 1,
-        "rating": 4
-      },
-      {
-        "user": 2,
-        "rating": 4
-      }
-    ]
+    "rating": []
   },
   {
     "id": 13,
@@ -1798,20 +1715,7 @@
         ]
       }
     ],
-    "rating": [
-      {
-        "user": 1,
-        "rating": 5
-      },
-      {
-        "user": 2,
-        "rating": 5
-      },
-      {
-        "user": 3,
-        "rating": 4
-      }
-    ]
+    "rating": []
   },
   {
     "id": 14,
@@ -1944,11 +1848,6 @@
         ]
       }
     ],
-    "rating": [
-      {
-        "user": 3,
-        "rating": 4
-      }
-    ]
+    "rating": []
   }
 ]

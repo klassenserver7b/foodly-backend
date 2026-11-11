@@ -12,7 +12,8 @@
    **next page number** as a string (the field name the frontend already consumes) and is `null` on the last page —
    despite the name, nothing is cursor-encoded. The recipes list endpoint returns only preview data (no sections,
    ingredients, or steps), requiring a fetch to `GET /api/v1/recipes/:id` for full details. Small bounded catalogs
-   (tags, ingredients) are returned as flat arrays without pagination.
+   (tags, ingredients) are unpaginated, but still wrapped in the usual envelope: `{ "data": [...] }`
+   (`CatalogResponse<T>`), not a bare top-level array.
 
 3. **Timestamps**: All entities that support creation/update tracking use ISO 8601 UTC strings. `updatedAt` on recipes
    reflects content changes only — not permission/sharing changes.
@@ -43,7 +44,7 @@
 | `name`           | `string`          | Recipe title. May contain `{tagId}` tokens for inline tag rendering.            |
 | `tags`           | `TagId[]`         | Array of tag IDs (= tag names).                                                 |
 | `source`         | `string \| null`  | URL or freetext source attribution.                                             |
-| `rating`         | `UserRating[]`    | *(Embedded on read; stored as separate DB rows.)*                               |
+| `rating`         | `UserRating[]`    | *(Currently always `[]`: the server hardcodes it. `user_ratings` rows are not yet loaded into responses.)* |
 | `time`           | `string \| null`  | Human-readable time string (may contain `{tagId}` tokens).                      |
 | `workMinutes`    | `int \| null`     | Active working time in minutes (for filtering).                                 |
 | `overallMinutes` | `int \| null`     | Total time including waiting (for filtering).                                   |
@@ -134,7 +135,8 @@ the `name` (so the frontend can render without fetching the catalog).
 | `user`   | `UserId`   | FK to user.   |
 | `rating` | `int`      | 1–5.          |
 
-> Never exposed as a standalone wire type. The frontend only sees ratings as `recipe.rating[]`.
+> Never exposed as a standalone wire type. The frontend only sees ratings as `recipe.rating[]`, but that field is
+> currently hardcoded to `[]` on every response — ratings from `user_ratings` are not yet wired into responses.
 
 ### Image
 
