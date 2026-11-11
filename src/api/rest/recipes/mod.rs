@@ -418,6 +418,36 @@ fn validate_filter_limits(filters: &RecipeFilters) -> Result<(), AppError> {
     Ok(())
 }
 
+/// Sort fields `fetch_recipes` knows how to translate into SQL. The snake_case
+/// spellings are long-standing aliases and stay accepted; misspellings such as
+/// "worktime" are not.
+const SORT_FIELDS: &[&str] = &[
+    "name",
+    "workTime",
+    "work_time",
+    "totalTime",
+    "total_time",
+    "rating",
+    "accessSince",
+];
+
+/// Rejects unknown `sort.field` values instead of silently ordering by id,
+/// which made clients believe they were sorting by the requested field.
+fn validate_sort_field(field: &str) -> Result<(), AppError> {
+    if SORT_FIELDS.contains(&field) {
+        Ok(())
+    } else {
+        Err(unsupported_sort_field(field))
+    }
+}
+
+fn unsupported_sort_field(field: &str) -> AppError {
+    AppError::Unprocessable(format!(
+        "sort.field must be one of {} (got {field:?})",
+        SORT_FIELDS.join(", ")
+    ))
+}
+
 async fn fetch_recipes(
     state: &AppState,
     user_id: i64,
@@ -432,6 +462,10 @@ async fn fetch_recipes(
     // Reject oversized filter arrays before building the (EXISTS-per-value) SQL.
     if let Some(f) = &query.filters {
         validate_filter_limits(f)?;
+    }
+
+    if let Some(s) = &query.sort {
+        validate_sort_field(&s.field)?;
     }
 
     let mut conn = state.pool.get().await?;
@@ -614,13 +648,17 @@ async fn fetch_recipes(
                     q = q.then_order_by(expr.asc());
                 }
             }
-            _ => {
-                q = q.then_order_by(recipes::id.asc());
+            other => {
+                // Guard rail: a field accepted by `validate_sort_field` but
+                // missing this match must fail loudly, never fall back to id.
+                return Err(unsupported_sort_field(other));
             }
         }
-    } else {
-        q = q.then_order_by(recipes::id.asc());
     }
+
+    // Always tie-break on id: without a total order, offset paging repeats or
+    // skips rows whose primary sort value is equal.
+    q = q.then_order_by(recipes::id.asc());
 
     let mut records = q
         .limit(limit + 1)

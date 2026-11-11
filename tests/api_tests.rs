@@ -951,12 +951,22 @@ async fn test_bulk_get_users_rejects_oversized_ids() {
 
 /// Helper: create a minimal recipe as `token` and return the full response.
 async fn create_test_recipe(app: &axum::Router, token: &str, name: &str) -> Value {
+    create_test_recipe_with_work_minutes(app, token, name, None).await
+}
+
+/// Helper: like [`create_test_recipe`], but with an explicit `workMinutes`.
+async fn create_test_recipe_with_work_minutes(
+    app: &axum::Router,
+    token: &str,
+    name: &str,
+    work_minutes: Option<i32>,
+) -> Value {
     let payload = serde_json::json!({
         "name": name,
         "tags": [],
         "source": null,
         "time": null,
-        "workMinutes": null,
+        "workMinutes": work_minutes,
         "overallMinutes": null,
         "sizeNumber": null,
         "sizeText": null,
@@ -1160,6 +1170,135 @@ async fn test_recipe_search_sort_by_access_since() {
         ],
         "descending access_since must list the most recently created recipe first"
     );
+}
+
+/// Misspelled / unknown `sort.field` values must be rejected with 422 instead
+/// of silently falling back to id ordering (the old behaviour).
+#[tokio::test]
+async fn test_recipe_search_rejects_unknown_sort_field() {
+    let app = app(test_state().await);
+    let (token, _) = register_test_user(&app, "Owner", "owner@example.com", "password123").await;
+    create_test_recipe(&app, &token, "First Recipe").await;
+
+    for field in ["worktime", "totaltime", "access_since", "bogus"] {
+        let payload = serde_json::json!({
+            "sort": { "field": field, "order": "asc" }
+        });
+
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/recipes/search")
+                    .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(serde_json::to_vec(&payload).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(
+            response.status(),
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "sort.field = {field:?} must be rejected rather than falling back to id order"
+        );
+
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        let json: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["error"]["code"], "UNPROCESSABLE");
+        let message = json["error"]["message"].as_str().unwrap();
+        assert!(
+            message.contains(field),
+            "error message must name the offending field, got: {message}"
+        );
+        assert!(
+            message.contains("workTime"),
+            "error message must list the accepted fields, got: {message}"
+        );
+    }
+}
+
+/// Ties on the primary sort field fall back to id ordering, while rows with
+/// distinct values still sort by the requested field: three recipes share
+/// `workMinutes = 10`, a faster one is created last and a slower one after it.
+#[tokio::test]
+async fn test_recipe_search_sort_ties_break_by_id() {
+    let app = app(test_state().await);
+    let (token, _) = register_test_user(&app, "Owner", "owner@example.com", "password123").await;
+
+    let mut ties = Vec::new();
+    for name in ["Tie A", "Tie B", "Tie C"] {
+        let recipe = create_test_recipe_with_work_minutes(&app, &token, name, Some(10)).await;
+        ties.push(recipe["id"].as_i64().unwrap());
+    }
+    ties.sort_unstable();
+
+    // The id-highest recipe is the fastest: it must lead a `workTime asc` sort,
+    // otherwise the tie-breaker replaced the primary ordering.
+    let quick = create_test_recipe_with_work_minutes(&app, &token, "Quick", Some(1)).await;
+    let quick_id = quick["id"].as_i64().unwrap();
+    let slow = create_test_recipe_with_work_minutes(&app, &token, "Slow", Some(20)).await;
+    let slow_id = slow["id"].as_i64().unwrap();
+    assert!(quick_id > *ties.last().unwrap());
+
+    // Same request twice: the total order (primary field, then id) must be
+    // stable across pages so offset paging neither repeats nor skips rows.
+    let page1 = sorted_recipe_ids(&app, &token, "workTime", 1, 2).await;
+    let page2 = sorted_recipe_ids(&app, &token, "workTime", 2, 2).await;
+    let page3 = sorted_recipe_ids(&app, &token, "workTime", 3, 2).await;
+
+    assert_eq!(
+        page1,
+        vec![quick_id, ties[0]],
+        "fastest recipe first, then the lowest id among the tied ones"
+    );
+    assert_eq!(
+        page2,
+        vec![ties[1], ties[2]],
+        "tied rows keep ascending id order without repeating page 1"
+    );
+    assert_eq!(page3, vec![slow_id], "slowest recipe sorts last");
+
+    // Re-running page 1 must yield the identical order.
+    assert_eq!(
+        sorted_recipe_ids(&app, &token, "workTime", 1, 2).await,
+        page1
+    );
+}
+
+/// Helper: `POST /recipes/search` sorted by `field`, returning just the page's ids.
+async fn sorted_recipe_ids(
+    app: &axum::Router,
+    token: &str,
+    field: &str,
+    page: i64,
+    limit: i64,
+) -> Vec<i64> {
+    let payload = serde_json::json!({ "sort": { "field": field, "order": "asc" } });
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/api/v1/recipes/search?page={page}&limit={limit}"))
+                .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(serde_json::to_vec(&payload).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: Value = serde_json::from_slice(&body).unwrap();
+    json["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|p| p["id"].as_i64().unwrap())
+        .collect()
 }
 
 // ─── Categories: PUT /categories/order ────────────────────────────────────
