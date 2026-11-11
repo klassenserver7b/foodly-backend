@@ -46,7 +46,8 @@ Response wrapper:
 }
 ```
 
-Small, bounded catalogs (`/tags`, `/ingredients`) return a flat array (no pagination).
+Small, bounded catalogs (`/tags`, `/ingredients`) are not paginated but still use the
+`{"data": [...]}` envelope (`CatalogResponse<T>`), without a `cursor` field.
 
 ### Error Envelope
 
@@ -65,7 +66,8 @@ Standard status codes used: `400` (validation), `401` (unauthenticated), `403` (
 
 ### Timestamps
 
-All timestamps are ISO 8601 UTC strings (`"2026-01-15T14:30:00Z"`).
+All timestamps are ISO 8601 UTC strings using the `+00:00` offset form
+(`"2026-01-15T14:30:00+00:00"`).
 
 ---
 
@@ -218,6 +220,27 @@ Update the authenticated user's profile fields. Only provided fields are updated
 
 ---
 
+### `PUT /api/v1/users/me`
+
+Full replacement of the authenticated user's profile core fields. Unlike `PATCH`,
+both `name` and `email` are **required** — omitting either one fails body
+deserialization rather than silently keeping the old value.
+
+**Request:**
+```json
+{
+  "name": "Kolja M.",
+  "email": "kolja@example.com"
+}
+```
+
+**Response `200 OK`:** *(returns the full updated user object, same shape as `GET /users/me`)*
+
+**Errors:**
+- `422 Unprocessable` — `name` or `email` empty.
+
+---
+
 ### `PUT /api/v1/users/me/profile-picture`
 
 Upload or replace the user's profile picture. Body is the raw image binary (`Content-Type: image/jpeg`, `image/png`, or `image/webp`).
@@ -267,7 +290,7 @@ Search for users by name (or partial name) for use in "invite to recipe" or "add
 > The authenticated user (the one performing the search) is **excluded** from results — you don't invite yourself.
 
 **Errors:**
-- `400 Bad Request` — `q` is missing or empty.
+- `422 Unprocessable` — `q` is missing or empty.
 
 ---
 
@@ -285,7 +308,9 @@ Resolve a set of user ids to compact display data in a single request. The front
 
 Malformed segments are **dropped silently** (`ids=1,abc,3` → `[1, 3]`). A missing or empty `ids` parameter returns an empty list rather than an error.
 
-**Bound:** at most **100** ids per request (`422 Unprocessable` beyond that).
+**Bounds:** at most **100** ids per request, and the raw `ids` parameter may not
+exceed **2048 bytes** (`422 Unprocessable` beyond either limit — the byte cap
+keeps the split/parse work bounded).
 
 **Response `200 OK`:**
 ```json
@@ -301,7 +326,7 @@ Malformed segments are **dropped silently** (`ids=1,abc,3` → `[1, 3]`). A miss
 
 **Errors:**
 - `401 Unauthorized` — missing/invalid access token.
-- `422 Unprocessable` — more than 100 ids in the request.
+- `422 Unprocessable` — more than 100 ids, or an `ids` parameter longer than 2048 bytes.
 
 ---
 
@@ -358,19 +383,16 @@ Search and list recipes accessible to the authenticated user (owned + shared as 
       "name": "Spaghetti Bolognese",
       "tags": ["Hauptgericht", "Italienisch"],
       "source": "https://example.com/bolognese",
-      "rating": [
-        { "user": 1, "rating": 5 },
-        { "user": 2, "rating": 4 }
-      ],
+      "rating": [],
       "time": "45 min",
       "workMinutes": 20,
       "overallMinutes": 45,
       "sizeNumber": 4,
       "sizeText": "{Portionen}",
-      "mainImage": 1,
-      "createdAt": "2026-01-10T12:00:00Z",
-      "updatedAt": "2026-03-15T09:30:00Z",
-      "myAccessSince": "2026-02-01T08:15:00Z"
+      "mainImage": { "id": 1, "hash": "a3f8c2d1e5...", "name": null },
+      "createdAt": "2026-01-10T12:00:00+00:00",
+      "updatedAt": "2026-03-15T09:30:00+00:00",
+      "myAccessSince": "2026-02-01T08:15:00+00:00"
     }
   ],
   "cursor": "2"
@@ -397,18 +419,18 @@ Get a single recipe with **full data** including sections, ingredients, steps, n
   "name": "Spaghetti Bolognese",
   "tags": ["Hauptgericht", "Italienisch"],
   "source": "https://example.com/bolognese",
-  "rating": [
-    { "user": 1, "rating": 5 },
-    { "user": 2, "rating": 4 }
-  ],
+  "rating": [],
   "time": "45 min",
   "workMinutes": 20,
   "overallMinutes": 45,
   "sizeNumber": 4,
   "sizeText": "{Portionen}",
   "notes": ["Am besten mit frischem Basilikum servieren."],
-  "mainImage": 1,
-  "images": [2, 3],
+  "mainImage": { "id": 1, "hash": "a3f8c2d1e5...", "name": null },
+  "images": [
+    { "id": 2, "hash": "b2e4f6a8c1...", "name": null },
+    { "id": 3, "hash": "c3d5e7f9b2...", "name": null }
+  ],
   "sections": [
     {
       "id": 1,
@@ -437,9 +459,9 @@ Get a single recipe with **full data** including sections, ingredients, steps, n
       ]
     }
   ],
-  "createdAt": "2026-01-10T12:00:00Z",
-  "updatedAt": "2026-03-15T09:30:00Z",
-  "myAccessSince": "2026-01-10T12:00:00Z"
+  "createdAt": "2026-01-10T12:00:00+00:00",
+  "updatedAt": "2026-03-15T09:30:00+00:00",
+  "myAccessSince": "2026-01-10T12:00:00+00:00"
 }
 ```
 
@@ -489,7 +511,11 @@ Create a new recipe. The authenticated user becomes the `owner`.
 
 > Note: In the create/update request, `ingredient` is just the `IngredientId` (a number) or `null`. The server expands it to `{ id, name }` in responses.
 
-**Response `201 Created`:** *(full recipe object, same shape as `GET /recipes/:id`)*
+> The same id → object expansion applies to images: requests send `mainImage` / `images`
+> as image ids (or `null` / `[]`), while responses return full `ImageRef` objects
+> `{ id, hash, name }` (`mainImage` is `null` when unset).
+
+**Response `200 OK`:** *(full recipe object, same shape as `GET /recipes/:id`)*
 
 **Errors:**
 - `422 Unprocessable` — validation failure (empty name, etc.).
@@ -528,7 +554,7 @@ Create a personal copy of a recipe. The authenticated user becomes the owner of 
 
 **Request:** *(empty body)*
 
-**Response `201 Created`:** *(full recipe object of the new copy)*
+**Response `200 OK`:** *(full recipe object of the new copy)*
 
 ---
 
@@ -669,7 +695,7 @@ Create a new category.
 }
 ```
 
-**Response `201 Created`:** *(full category object; `recipes` starts as `[]`, `order` is auto-assigned)*
+**Response `200 OK`:** *(full category object; `recipes` starts as `[]`, `order` is auto-assigned)*
 
 ---
 
@@ -870,7 +896,9 @@ Images are stored on the server's disk, addressed by content hash. The database 
 
 Upload an image. **Requires authentication** (`Authorization: Bearer <token>`). The uploader is recorded as `owner_id`. Body is the raw image binary (`Content-Type: image/jpeg`, `image/png`, or `image/webp`) — not multipart. The format is detected from magic bytes, not the request header. Max body size: 8 MiB.
 
-**Response `201 Created`:**
+**Response `201 Created`** for a new image, **`200 OK`** when re-uploading identical
+bytes (the content hash already exists, so the existing row is returned — the upload
+is idempotent):
 ```json
 {
   "id": 7,
@@ -878,8 +906,6 @@ Upload an image. **Requires authentication** (`Authorization: Bearer <token>`). 
   "name": null
 }
 ```
-
-Re-uploading identical bytes is idempotent: the content hash already exists, so the existing row is returned.
 
 **Errors:**
 - `401 Unauthorized` — missing or invalid access token.
@@ -968,13 +994,13 @@ Submit an offline change backlog. The server processes changes sequentially, app
     {
       "type": "recipe.update",
       "recipeId": 1,
-      "timestamp": "2026-06-28T10:00:00Z",
+      "timestamp": "2026-06-28T10:00:00+00:00",
       "data": { "name": "Spaghetti Bolognese (updated)" }
     },
     {
       "type": "recipe.create",
       "tempId": "tmp-abc-123",
-      "timestamp": "2026-06-28T10:01:00Z",
+      "timestamp": "2026-06-28T10:01:00+00:00",
       "data": { "name": "Neues Rezept", "...": "..." }
     }
   ]
@@ -1128,6 +1154,7 @@ CORS_ALLOWED_ORIGINS=https://app.example.com
 | `DELETE` | `/api/v1/auth/sessions`              | yes  | Logout all sessions                              |
 | `GET`    | `/api/v1/users/me`                    | yes  | Current user profile                             |
 | `PATCH`  | `/api/v1/users/me`                    | yes  | Update own profile                               |
+| `PUT`    | `/api/v1/users/me`                    | yes  | Replace own profile (name + email required)      |
 | `PUT`    | `/api/v1/users/me/profile-picture`    | yes  | Upload/replace profile picture                   |
 | `DELETE` | `/api/v1/users/me/profile-picture`    | yes  | Remove profile picture                           |
 | `GET`    | `/api/v1/users/search?q=...`          | yes  | Search users by name (invite dropdown)           |
