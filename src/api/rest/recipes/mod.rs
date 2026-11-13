@@ -5,8 +5,8 @@
 mod helpers;
 
 use crate::models::recipe::{
-    CreateRecipe, ImageRef, Order, Recipe, RecipeAccessRights, RecipePreview, RecipeSearchQuery,
-    RecipeShareState,
+    CreateRecipe, ImageRef, Order, Recipe, RecipeAccessRights, RecipeFilters, RecipePreview,
+    RecipeSearchQuery, RecipeShareState,
 };
 use crate::{AppState, error::AppError};
 use axum::{
@@ -19,7 +19,7 @@ use diesel::result::OptionalExtension;
 use diesel::sql_types::Bool;
 use diesel_async::{AsyncConnection, RunQueryDsl};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::schema::{
     images, recipe_editors, recipe_images, recipe_tags, recipe_viewers, recipes,
@@ -60,6 +60,11 @@ pub fn router() -> Router<AppState> {
         .route("/{id}/copy", post(copy_recipe))
 }
 
+/// Hard ceiling for the `page` query parameter. `offset = (page - 1) * limit`
+/// walks and discards every skipped row, so an unbounded page is a cheap DoS
+/// lever — and `page = i64::MAX` would overflow the offset computation.
+pub const MAX_PAGE: i64 = 10_000;
+
 #[derive(Deserialize)]
 pub struct PaginationQuery {
     pub page: Option<i64>,
@@ -96,9 +101,8 @@ macro_rules! recipe_cols {
 async fn get_recipe(
     State(state): State<AppState>,
     Extension(user_id): Extension<i64>,
-    Path(id): Path<i32>,
+    Path(r_id): Path<i64>,
 ) -> Result<Json<Recipe>, AppError> {
-    let r_id = id as i64;
     let u_id = user_id;
 
     let mut conn = state.pool.get().await?;
@@ -143,6 +147,29 @@ async fn get_recipe(
         return Err(AppError::Forbidden);
     }
 
+    // `myAccessSince` reflects when *this* user got access; the owner's
+    // access starts when the recipe was created. Editor beats viewer when a
+    // user somehow appears in both lists.
+    let my_access_since = if owner_id == u_id {
+        Some(created_at.to_rfc3339())
+    } else {
+        let editor_since: Option<DateTime<Utc>> = recipe_editors::table
+            .filter(recipe_editors::recipe_id.eq(r_id))
+            .filter(recipe_editors::user_id.eq(u_id))
+            .select(recipe_editors::added_at)
+            .first(&mut conn)
+            .await
+            .optional()?;
+        let viewer_since: Option<DateTime<Utc>> = recipe_viewers::table
+            .filter(recipe_viewers::recipe_id.eq(r_id))
+            .filter(recipe_viewers::user_id.eq(u_id))
+            .select(recipe_viewers::added_at)
+            .first(&mut conn)
+            .await
+            .optional()?;
+        editor_since.or(viewer_since).map(|ts| ts.to_rfc3339())
+    };
+
     let tags: Vec<String> = recipe_tags::table
         .filter(recipe_tags::recipe_id.eq(r_id))
         .order(recipe_tags::position.asc())
@@ -175,10 +202,10 @@ async fn get_recipe(
     let sections = helpers::fetch_sections(r_id, &mut conn).await?;
 
     let recipe = Recipe {
-        id: id as i32,
-        owner: owner_id as i32,
-        editors: editors.into_iter().map(|v| v as i32).collect(),
-        viewers: viewers.into_iter().map(|v| v as i32).collect(),
+        id,
+        owner: owner_id,
+        editors,
+        viewers,
         name,
         tags,
         source,
@@ -194,6 +221,7 @@ async fn get_recipe(
         sections,
         created_at: Some(created_at.to_rfc3339()),
         updated_at: Some(updated_at.to_rfc3339()),
+        my_access_since,
     };
     Ok(Json(recipe))
 }
@@ -206,6 +234,7 @@ async fn create_recipe(
     if payload.name.is_empty() {
         return Err(AppError::Unprocessable("Name cannot be empty".into()));
     }
+    helpers::validate_recipe_limits(&payload)?;
 
     let u_id = user_id;
     let mut conn = state.pool.get().await?;
@@ -223,7 +252,7 @@ async fn create_recipe(
                     recipes::size_number.eq(payload.size_number),
                     recipes::size_text.eq(payload.size_text.clone()),
                     recipes::notes.eq(payload.notes.clone()),
-                    recipes::main_image_id.eq(payload.main_image.map(|i| i as i64)),
+                    recipes::main_image_id.eq(payload.main_image),
                 ))
                 .returning(recipes::id)
                 .get_result(conn)
@@ -240,20 +269,20 @@ async fn create_recipe(
         })
         .await?;
 
-    get_recipe(State(state), Extension(user_id), Path(rec_id as i32)).await
+    get_recipe(State(state), Extension(user_id), Path(rec_id)).await
 }
 
 async fn update_recipe(
     State(state): State<AppState>,
     Extension(user_id): Extension<i64>,
-    Path(id): Path<i32>,
+    Path(r_id): Path<i64>,
     Json(payload): Json<CreateRecipe>,
 ) -> Result<Json<Recipe>, AppError> {
     if payload.name.is_empty() {
         return Err(AppError::Unprocessable("Name cannot be empty".into()));
     }
+    helpers::validate_recipe_limits(&payload)?;
 
-    let r_id = id as i64;
     let u_id = user_id;
 
     let mut conn = state.pool.get().await?;
@@ -268,15 +297,14 @@ async fn update_recipe(
     })
     .await?;
 
-    get_recipe(State(state), Extension(user_id), Path(id)).await
+    get_recipe(State(state), Extension(user_id), Path(r_id)).await
 }
 
 async fn delete_recipe(
     State(state): State<AppState>,
     Extension(user_id): Extension<i64>,
-    Path(id): Path<i32>,
+    Path(r_id): Path<i64>,
 ) -> Result<axum::http::StatusCode, AppError> {
-    let r_id = id as i64;
     let u_id = user_id;
 
     let mut conn = state.pool.get().await?;
@@ -308,7 +336,7 @@ async fn delete_recipe(
 async fn copy_recipe(
     State(state): State<AppState>,
     Extension(user_id): Extension<i64>,
-    Path(id): Path<i32>,
+    Path(id): Path<i64>,
 ) -> Result<Json<Recipe>, AppError> {
     let original = get_recipe(State(state.clone()), Extension(user_id), Path(id))
         .await?
@@ -341,6 +369,85 @@ fn nonempty<T>(opt: &Option<Vec<T>>) -> Option<&Vec<T>> {
     opt.as_ref().filter(|v| !v.is_empty())
 }
 
+/// Upper bound for the AND-filter arrays (`categories`, `tags`, `ingredients`).
+/// Every value becomes its own `EXISTS` sub-select plus bind parameter, so an
+/// unbounded array can exceed Postgres' 65535-bind limit and blow up query
+/// planning.
+const MAX_FILTER_VALUES: usize = 100;
+
+/// Upper bound for the enum filter arrays (`accessRights`, `shareStates`).
+/// Each enum only has three variants, so anything beyond a few entries is
+/// redundant — and every entry would otherwise add a level to the OR-tree,
+/// which diesel walks (and drops) recursively.
+const MAX_ENUM_FILTER_VALUES: usize = 10;
+
+fn validate_filter_limits(filters: &RecipeFilters) -> Result<(), AppError> {
+    let check = |field: &str, len: Option<usize>, max: usize| -> Result<(), AppError> {
+        if matches!(len, Some(n) if n > max) {
+            return Err(AppError::Unprocessable(format!(
+                "{field} accepts at most {max} entries"
+            )));
+        }
+        Ok(())
+    };
+    check(
+        "categories",
+        filters.categories.as_ref().map(Vec::len),
+        MAX_FILTER_VALUES,
+    )?;
+    check(
+        "tags",
+        filters.tags.as_ref().map(Vec::len),
+        MAX_FILTER_VALUES,
+    )?;
+    check(
+        "ingredients",
+        filters.ingredients.as_ref().map(Vec::len),
+        MAX_FILTER_VALUES,
+    )?;
+    check(
+        "accessRights",
+        filters.access_rights.as_ref().map(Vec::len),
+        MAX_ENUM_FILTER_VALUES,
+    )?;
+    check(
+        "shareStates",
+        filters.share_states.as_ref().map(Vec::len),
+        MAX_ENUM_FILTER_VALUES,
+    )?;
+    Ok(())
+}
+
+/// Sort fields `fetch_recipes` knows how to translate into SQL. The snake_case
+/// spellings are long-standing aliases and stay accepted; misspellings such as
+/// "worktime" are not.
+const SORT_FIELDS: &[&str] = &[
+    "name",
+    "workTime",
+    "work_time",
+    "totalTime",
+    "total_time",
+    "rating",
+    "accessSince",
+];
+
+/// Rejects unknown `sort.field` values instead of silently ordering by id,
+/// which made clients believe they were sorting by the requested field.
+fn validate_sort_field(field: &str) -> Result<(), AppError> {
+    if SORT_FIELDS.contains(&field) {
+        Ok(())
+    } else {
+        Err(unsupported_sort_field(field))
+    }
+}
+
+fn unsupported_sort_field(field: &str) -> AppError {
+    AppError::Unprocessable(format!(
+        "sort.field must be one of {} (got {field:?})",
+        SORT_FIELDS.join(", ")
+    ))
+}
+
 async fn fetch_recipes(
     state: &AppState,
     user_id: i64,
@@ -349,8 +456,17 @@ async fn fetch_recipes(
 ) -> Result<PaginatedResponse<RecipePreview>, AppError> {
     let u_id = user_id;
     let limit = pagination.limit.unwrap_or(20).min(100);
-    let page = pagination.page.unwrap_or(1).max(1);
+    let page = pagination.page.unwrap_or(1).clamp(1, MAX_PAGE);
     let offset = (page - 1) * limit;
+
+    // Reject oversized filter arrays before building the (EXISTS-per-value) SQL.
+    if let Some(f) = &query.filters {
+        validate_filter_limits(f)?;
+    }
+
+    if let Some(s) = &query.sort {
+        validate_sort_field(&s.field)?;
+    }
 
     let mut conn = state.pool.get().await?;
 
@@ -369,7 +485,10 @@ async fn fetch_recipes(
             let mut or_cond: Cond = Box::new(diesel::dsl::sql::<Bool>("1=0"));
 
             if let Some(accs) = nonempty(&f.access_rights) {
-                for a in accs {
+                // Dedupe: every entry nests the OR-tree one level deeper, and
+                // diesel walks that tree recursively.
+                let mut seen = HashSet::new();
+                for a in accs.iter().filter(|a| seen.insert(*a)) {
                     let branch: Cond = match a {
                         RecipeAccessRights::Owner => Box::new(recipes::owner_id.eq(u_id)),
                         RecipeAccessRights::Editor => Box::new(diesel::dsl::exists(
@@ -388,7 +507,8 @@ async fn fetch_recipes(
             }
 
             if let Some(shs) = nonempty(&f.share_states) {
-                for s in shs {
+                let mut seen = HashSet::new();
+                for s in shs.iter().filter(|s| seen.insert(*s)) {
                     let branch: Cond = match s {
                         RecipeShareState::Private => Box::new(
                             recipes::owner_id
@@ -489,14 +609,14 @@ async fn fetch_recipes(
                     q = q.then_order_by(recipes::name.asc().nulls_last());
                 }
             }
-            "worktime" | "work_time" => {
+            "workTime" | "work_time" => {
                 if desc {
                     q = q.then_order_by(recipes::work_minutes.desc().nulls_last());
                 } else {
                     q = q.then_order_by(recipes::work_minutes.asc().nulls_last());
                 }
             }
-            "totaltime" | "total_time" => {
+            "totalTime" | "total_time" => {
                 if desc {
                     q = q.then_order_by(recipes::overall_minutes.desc().nulls_last());
                 } else {
@@ -510,13 +630,35 @@ async fn fetch_recipes(
                     "(SELECT COALESCE(AVG(rating), 0.0) FROM user_ratings WHERE recipe_id = recipes.id) {dir} NULLS LAST"
                 )));
             }
-            _ => {
-                q = q.then_order_by(recipes::id.asc());
+            "accessSince" => {
+                // Mirrors the per-row `myAccessSince` computation: owner uses
+                // the recipe's creation time, everyone else their join-table
+                // `added_at` (editor before viewer).
+                let expr = diesel::dsl::sql::<diesel::sql_types::Timestamptz>(
+                    "CASE WHEN recipes.owner_id = ")
+                    .bind::<diesel::sql_types::BigInt, _>(u_id)
+                    .sql(" THEN recipes.created_at ELSE COALESCE((SELECT added_at FROM recipe_editors WHERE recipe_id = recipes.id AND user_id = ")
+                    .bind::<diesel::sql_types::BigInt, _>(u_id)
+                    .sql("), (SELECT added_at FROM recipe_viewers WHERE recipe_id = recipes.id AND user_id = ")
+                    .bind::<diesel::sql_types::BigInt, _>(u_id)
+                    .sql("), recipes.created_at) END");
+                if desc {
+                    q = q.then_order_by(expr.desc());
+                } else {
+                    q = q.then_order_by(expr.asc());
+                }
+            }
+            other => {
+                // Guard rail: a field accepted by `validate_sort_field` but
+                // missing this match must fail loudly, never fall back to id.
+                return Err(unsupported_sort_field(other));
             }
         }
-    } else {
-        q = q.then_order_by(recipes::id.asc());
     }
+
+    // Always tie-break on id: without a total order, offset paging repeats or
+    // skips rows whose primary sort value is equal.
+    q = q.then_order_by(recipes::id.asc());
 
     let mut records = q
         .limit(limit + 1)
@@ -550,6 +692,33 @@ async fn fetch_recipes(
             .select((recipe_viewers::recipe_id, recipe_viewers::user_id))
             .load(&mut conn)
             .await?
+    };
+
+    // When the current user was added as editor/viewer, keyed by recipe.
+    let my_editor_since: HashMap<i64, DateTime<Utc>> = if ids.is_empty() {
+        HashMap::new()
+    } else {
+        recipe_editors::table
+            .filter(recipe_editors::recipe_id.eq_any(&ids))
+            .filter(recipe_editors::user_id.eq(u_id))
+            .select((recipe_editors::recipe_id, recipe_editors::added_at))
+            .load::<(i64, DateTime<Utc>)>(&mut conn)
+            .await?
+            .into_iter()
+            .collect()
+    };
+
+    let my_viewer_since: HashMap<i64, DateTime<Utc>> = if ids.is_empty() {
+        HashMap::new()
+    } else {
+        recipe_viewers::table
+            .filter(recipe_viewers::recipe_id.eq_any(&ids))
+            .filter(recipe_viewers::user_id.eq(u_id))
+            .select((recipe_viewers::recipe_id, recipe_viewers::added_at))
+            .load::<(i64, DateTime<Utc>)>(&mut conn)
+            .await?
+            .into_iter()
+            .collect()
     };
 
     let tags: Vec<(i64, String)> = if ids.is_empty() {
@@ -597,15 +766,15 @@ async fn fetch_recipes(
             updated_at,
         ) = rec;
 
-        let rec_editors: Vec<i32> = editors
+        let rec_editors: Vec<i64> = editors
             .iter()
             .filter(|(rid, _)| *rid == id)
-            .map(|(_, uid)| *uid as i32)
+            .map(|(_, uid)| *uid)
             .collect();
-        let rec_viewers: Vec<i32> = viewers
+        let rec_viewers: Vec<i64> = viewers
             .iter()
             .filter(|(rid, _)| *rid == id)
-            .map(|(_, uid)| *uid as i32)
+            .map(|(_, uid)| *uid)
             .collect();
         let rec_tags: Vec<String> = tags
             .iter()
@@ -613,9 +782,18 @@ async fn fetch_recipes(
             .map(|(_, tag)| tag.clone())
             .collect();
 
+        let my_access_since = if owner_id == u_id {
+            Some(created_at.to_rfc3339())
+        } else {
+            my_editor_since
+                .get(&id)
+                .or_else(|| my_viewer_since.get(&id))
+                .map(chrono::DateTime::to_rfc3339)
+        };
+
         data.push(RecipePreview {
-            id: id as i32,
-            owner: owner_id as i32,
+            id,
+            owner: owner_id,
             editors: rec_editors,
             viewers: rec_viewers,
             name,
@@ -630,10 +808,13 @@ async fn fetch_recipes(
             main_image: main_image_id.and_then(|id| image_map.get(&id).cloned()),
             created_at: Some(created_at.to_rfc3339()),
             updated_at: Some(updated_at.to_rfc3339()),
+            my_access_since,
         });
     }
 
-    let cursor = if has_more {
+    // Stop emitting cursors at the page ceiling, otherwise a client following
+    // them would be pinned to the last allowed page and loop forever.
+    let cursor = if has_more && page < MAX_PAGE {
         Some((page + 1).to_string())
     } else {
         None

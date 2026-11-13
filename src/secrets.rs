@@ -2,17 +2,21 @@
 //! `PASSWORD_PEPPER` into the dotenv file, plus the argon2id password
 //! hashing that uses them.
 
+use rand::rngs::SysRng;
+use rand::{RngExt, TryRng, rng};
 use std::path::{Path, PathBuf};
 
 /// Generates a cryptographically secure hex string of `byte_len` random bytes.
+#[must_use]
 pub fn generate_hex(byte_len: usize) -> String {
-    use rand::RngCore;
     let mut bytes = vec![0u8; byte_len];
-    rand::rngs::OsRng.fill_bytes(&mut bytes);
+    if SysRng.try_fill_bytes(&mut bytes).is_err() {
+        rng().fill(&mut bytes);
+    }
     hex::encode(bytes)
 }
 
-/// On first run, generates JWT_SECRET and PASSWORD_PEPPER (each 64 hex
+/// On first run, generates `JWT_SECRET` and `PASSWORD_PEPPER` (each 64 hex
 /// chars from 32 random bytes) and persists them so they survive
 /// restarts. If a secret already exists and is valid (≥32 chars and
 /// not the committed placeholder), it is left untouched. If the
@@ -51,13 +55,12 @@ pub fn bootstrap_secret(key: &str) {
 
     // Case 2: non-empty but too short or the placeholder → ERROR, don't regenerate
     if !existing.is_empty() {
-        if existing == "change-me-min-32-chars-random-secret" {
-            panic!(
-                "{key} is set to the committed placeholder. \
-                 Set it to a real secret (≥32 chars) or remove the line \
-                 so a fresh one is generated."
-            );
-        }
+        assert!(
+            existing != "change-me-min-32-chars-random-secret",
+            "{key} is set to the committed placeholder. \
+             Set it to a real secret (≥32 chars) or remove the line \
+             so a fresh one is generated."
+        );
         panic!(
             "{key} is set to {} chars but must be ≥32. \
              Fix your environment or dotenv file — refusing to \

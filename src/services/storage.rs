@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use tokio::fs;
 
 /// Returns the SHA-256 hex digest used as the storage key for `bytes`.
+#[must_use]
 pub fn hash_bytes(bytes: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(bytes);

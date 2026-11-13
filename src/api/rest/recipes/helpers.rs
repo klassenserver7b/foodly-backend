@@ -11,6 +11,29 @@ use crate::schema::{
     steps,
 };
 
+/// Upper bound on ingredients summed across all sections of a recipe.
+///
+/// Ingredient lists used to be inserted one row per statement; an unbounded
+/// list meant tens of thousands of sequential round-trips inside a single
+/// transaction. The batch insert below removes that cost, and this cap keeps
+/// the statement size itself bounded.
+pub(super) const MAX_RECIPE_ITEMS: usize = 1000;
+
+/// Rejects payloads whose combined ingredient count exceeds [`MAX_RECIPE_ITEMS`].
+pub(super) fn validate_recipe_limits(payload: &CreateRecipe) -> Result<(), AppError> {
+    let total: usize = payload
+        .sections
+        .iter()
+        .map(|section| section.ingredients.len())
+        .sum();
+    if total > MAX_RECIPE_ITEMS {
+        return Err(AppError::Unprocessable(format!(
+            "sections accept at most {MAX_RECIPE_ITEMS} ingredients in total"
+        )));
+    }
+    Ok(())
+}
+
 pub(super) async fn insert_section(
     sec: CreateSection,
     r_id: i64,
@@ -46,24 +69,34 @@ pub(super) async fn insert_section(
             .await?;
     }
 
-    for (i_pos, ing) in sec.ingredients.into_iter().enumerate() {
+    for ing in &sec.ingredients {
         if !ing.is_valid() {
             return Err(AppError::Unprocessable(format!(
-                "Invalid ingredient: {:?}",
-                ing
+                "Invalid ingredient: {ing:?}"
             )));
         }
+    }
 
+    if !sec.ingredients.is_empty() {
+        // One multi-row statement: a single round-trip regardless of item count.
+        let values: Vec<_> = sec
+            .ingredients
+            .iter()
+            .enumerate()
+            .map(|(i_pos, ing)| {
+                (
+                    recipe_ingredients::section_id.eq(sec_id),
+                    recipe_ingredients::ingredient_id.eq(ing.ingredient),
+                    recipe_ingredients::text.eq(ing.text.clone()),
+                    recipe_ingredients::amount.eq(ing.amount.clone()),
+                    recipe_ingredients::amount_prefix.eq(ing.amount_prefix.clone()),
+                    recipe_ingredients::unit.eq(ing.unit.clone()),
+                    recipe_ingredients::position.eq(i_pos as i32),
+                )
+            })
+            .collect();
         diesel::insert_into(recipe_ingredients::table)
-            .values((
-                recipe_ingredients::section_id.eq(sec_id),
-                recipe_ingredients::ingredient_id.eq(ing.ingredient.map(|i| i as i64)),
-                recipe_ingredients::text.eq(ing.text),
-                recipe_ingredients::amount.eq(ing.amount),
-                recipe_ingredients::amount_prefix.eq(ing.amount_prefix),
-                recipe_ingredients::unit.eq(ing.unit),
-                recipe_ingredients::position.eq(i_pos as i32),
-            ))
+            .values(&values)
             .execute(conn)
             .await?;
     }
@@ -119,9 +152,9 @@ pub(super) async fn fetch_sections(
             .map(
                 |(id, ingredient_id, ingredient_name, text, amount, amount_prefix, unit)| {
                     RecipeIngredient {
-                        id: id as i32,
+                        id,
                         ingredient: ingredient_id.map(|iid| IngredientRef {
-                            id: iid as i32,
+                            id: iid,
                             name: ingredient_name.unwrap_or_default(),
                         }),
                         text,
@@ -134,7 +167,7 @@ pub(super) async fn fetch_sections(
             .collect();
 
         result.push(Section {
-            id: sec_id as i32,
+            id: sec_id,
             name: sec_name,
             steps: step_rows,
             ingredients: ings,
@@ -172,7 +205,7 @@ pub(super) async fn insert_recipe_tags(
 
 pub(super) async fn insert_recipe_images(
     r_id: i64,
-    images: Vec<i32>,
+    images: Vec<i64>,
     conn: &mut AsyncPgConnection,
 ) -> Result<(), AppError> {
     if images.is_empty() {
@@ -184,7 +217,7 @@ pub(super) async fn insert_recipe_images(
         .map(|(pos, img)| {
             (
                 recipe_images::recipe_id.eq(r_id),
-                recipe_images::image_id.eq(img as i64),
+                recipe_images::image_id.eq(img),
                 recipe_images::position.eq(pos as i32),
             )
         })
@@ -211,7 +244,7 @@ pub(super) async fn replace_recipe_tags(
 
 pub(super) async fn replace_recipe_images(
     r_id: i64,
-    images: Vec<i32>,
+    images: Vec<i64>,
     conn: &mut AsyncPgConnection,
 ) -> Result<(), AppError> {
     diesel::delete(recipe_images::table)
@@ -278,7 +311,7 @@ pub(super) async fn update_recipe_metadata(
             recipes::size_number.eq(payload.size_number),
             recipes::size_text.eq(payload.size_text.clone()),
             recipes::notes.eq(payload.notes.clone()),
-            recipes::main_image_id.eq(payload.main_image.map(|i| i as i64)),
+            recipes::main_image_id.eq(payload.main_image),
             recipes::updated_at.eq(diesel::dsl::now),
         ))
         .execute(conn)
@@ -297,12 +330,8 @@ pub(super) fn create_recipe_copy(original: Recipe) -> CreateRecipe {
         size_number: original.size_number,
         size_text: original.size_text,
         notes: original.notes,
-        main_image: original.main_image.map(|img| img.id as i32),
-        images: original
-            .images
-            .into_iter()
-            .map(|img| img.id as i32)
-            .collect(),
+        main_image: original.main_image.map(|img| img.id),
+        images: original.images.into_iter().map(|img| img.id).collect(),
         sections: original
             .sections
             .into_iter()

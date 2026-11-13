@@ -53,12 +53,13 @@ pub enum RateLimitMode {
 impl RateLimitMode {
     /// Parse and validate the `RATE_LIMIT_MODE` env var, failing fast on
     /// unknown values instead of silently picking the wrong topology.
+    #[must_use]
     pub fn from_env() -> Self {
         let raw = std::env::var("RATE_LIMIT_MODE").unwrap_or_else(|_| "direct".to_string());
         match raw.trim().to_ascii_lowercase().as_str() {
-            "direct" => RateLimitMode::Direct,
-            "proxy" => RateLimitMode::Proxy,
-            "disabled" => RateLimitMode::Disabled,
+            "direct" => Self::Direct,
+            "proxy" => Self::Proxy,
+            "disabled" => Self::Disabled,
             other => panic!("invalid RATE_LIMIT_MODE {other:?}: expected direct|proxy|disabled"),
         }
     }
@@ -148,14 +149,14 @@ impl TrustedProxy {
             match network {
                 IpAddr::V4(_) if prefix_len > 32 => None,
                 IpAddr::V6(_) if prefix_len > 128 => None,
-                _ => Some(TrustedProxy::Cidr {
+                _ => Some(Self::Cidr {
                     network,
                     prefix_len,
                 }),
             }
         } else {
             let ip = s.parse::<IpAddr>().ok()?;
-            Some(TrustedProxy::Ip(ip))
+            Some(Self::Ip(ip))
         }
     }
 
@@ -163,8 +164,8 @@ impl TrustedProxy {
     /// plain IPs, CIDR containment for ranges).
     fn contains(&self, ip: IpAddr) -> bool {
         match self {
-            TrustedProxy::Ip(proxy_ip) => proxy_ip == &ip,
-            TrustedProxy::Cidr {
+            Self::Ip(proxy_ip) => proxy_ip == &ip,
+            Self::Cidr {
                 network,
                 prefix_len,
             } => match (network, ip) {
@@ -346,12 +347,14 @@ fn cors_layer() -> CorsLayer {
         .split(',')
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
-        .filter_map(|s| match HeaderValue::from_str(&s) {
-            Ok(hv) => Some(hv),
-            Err(_) => {
-                eprintln!("warning: skipping invalid CORS origin: {s:?}");
-                None
-            }
+        .filter_map(|s| {
+            HeaderValue::from_str(&s).map_or_else(
+                |_| {
+                    eprintln!("warning: skipping invalid CORS origin: {s:?}");
+                    None
+                },
+                Some,
+            )
         })
         .collect();
 

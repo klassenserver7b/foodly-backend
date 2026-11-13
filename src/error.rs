@@ -28,27 +28,23 @@ pub enum AppError {
 impl IntoResponse for AppError {
     fn into_response(self) -> Response {
         let (status, code, message) = match self {
-            AppError::NotFound(msg) => (StatusCode::NOT_FOUND, "NOT_FOUND", msg),
-            AppError::Forbidden => (
+            Self::NotFound(msg) => (StatusCode::NOT_FOUND, "NOT_FOUND", msg),
+            Self::Forbidden => (
                 StatusCode::FORBIDDEN,
                 "FORBIDDEN",
                 "Access denied".to_string(),
             ),
-            AppError::Unprocessable(msg) => {
-                (StatusCode::UNPROCESSABLE_ENTITY, "UNPROCESSABLE", msg)
-            }
-            AppError::Conflict(msg) => (StatusCode::CONFLICT, "CONFLICT", msg),
-            AppError::Internal(err) => {
-                eprintln!("Internal error: {:?}", err);
+            Self::Unprocessable(msg) => (StatusCode::UNPROCESSABLE_ENTITY, "UNPROCESSABLE", msg),
+            Self::Conflict(msg) => (StatusCode::CONFLICT, "CONFLICT", msg),
+            Self::Internal(err) => {
+                eprintln!("Internal error: {err:?}");
                 (
                     StatusCode::INTERNAL_SERVER_ERROR,
                     "INTERNAL_SERVER_ERROR",
                     "An internal server error occurred".to_string(),
                 )
             }
-            AppError::Unauthorized(ref msg) => {
-                (StatusCode::UNAUTHORIZED, "UNAUTHORIZED", msg.clone())
-            }
+            Self::Unauthorized(ref msg) => (StatusCode::UNAUTHORIZED, "UNAUTHORIZED", msg.clone()),
         };
 
         let body = Json(json!({
@@ -87,10 +83,10 @@ impl From<diesel::result::Error> for AppError {
                     DatabaseErrorKind::CheckViolation => {
                         Self::Unprocessable("Check constraint violation".into())
                     }
-                    _ => Self::Internal(anyhow::anyhow!("Database error: {}", message)),
+                    _ => Self::Internal(anyhow::anyhow!("Database error: {message}")),
                 }
             }
-            _ => Self::Internal(anyhow::anyhow!("Query error: {}", err)),
+            _ => Self::Internal(anyhow::anyhow!("Query error: {err}")),
         }
     }
 }
@@ -102,10 +98,10 @@ impl From<diesel_async::pooled_connection::deadpool::PoolError> for AppError {
 
         match err {
             DeadpoolError::Backend(DieselPoolError::ConnectionError(e)) => {
-                Self::Internal(anyhow::anyhow!("DB connection error: {}", e))
+                Self::Internal(anyhow::anyhow!("DB connection error: {e}"))
             }
             DeadpoolError::Backend(DieselPoolError::QueryError(e)) => {
-                Self::Internal(anyhow::anyhow!("DB pool query error: {}", e))
+                Self::Internal(anyhow::anyhow!("DB pool query error: {e}"))
             }
             DeadpoolError::Timeout(_) => {
                 Self::Internal(anyhow::anyhow!("Timed out waiting for a DB connection"))
@@ -116,7 +112,7 @@ impl From<diesel_async::pooled_connection::deadpool::PoolError> for AppError {
             DeadpoolError::NoRuntimeSpecified => {
                 Self::Internal(anyhow::anyhow!("DB pool: no async runtime specified"))
             }
-            e => Self::Internal(anyhow::anyhow!("DB pool error: {}", e)),
+            e => Self::Internal(anyhow::anyhow!("DB pool error: {e}")),
         }
     }
 }

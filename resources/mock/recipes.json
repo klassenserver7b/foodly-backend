@@ -13,8 +13,53 @@
     "sizeNumber": 4,
     "sizeText": "{Vegan} {Portionen}",
     "notes": ["Schmeckt am nächsten {Vegan} Tag aufgewärmt noch besser. {WIP}"],
-    "mainImage": 1,
-    "images": [3, 4, 5, 6, 7, 8, 9, 10],
+    "mainImage": {
+      "id": 1,
+      "hash": "hash_1",
+      "name": "mock.jpg"
+    },
+    "images": [
+      {
+        "id": 3,
+        "hash": "hash_3",
+        "name": "mock.jpg"
+      },
+      {
+        "id": 4,
+        "hash": "hash_4",
+        "name": "mock.jpg"
+      },
+      {
+        "id": 5,
+        "hash": "hash_5",
+        "name": "mock.jpg"
+      },
+      {
+        "id": 6,
+        "hash": "hash_6",
+        "name": "mock.jpg"
+      },
+      {
+        "id": 7,
+        "hash": "hash_7",
+        "name": "mock.jpg"
+      },
+      {
+        "id": 8,
+        "hash": "hash_8",
+        "name": "mock.jpg"
+      },
+      {
+        "id": 9,
+        "hash": "hash_9",
+        "name": "mock.jpg"
+      },
+      {
+        "id": 10,
+        "hash": "hash_10",
+        "name": "mock.jpg"
+      }
+    ],
     "sections": [
       {
         "id": 1,
@@ -139,16 +184,7 @@
         ]
       }
     ],
-    "rating": [
-      {
-        "user": 1,
-        "rating": 5
-      },
-      {
-        "user": 2,
-        "rating": 4
-      }
-    ]
+    "rating": []
   },
   {
     "id": 2,
@@ -164,8 +200,33 @@
     "sizeNumber": null,
     "sizeText": "26 cm {Springform}",
     "notes": [],
-    "mainImage": 2,
-    "images": [3, 4, 5, 6],
+    "mainImage": {
+      "id": 2,
+      "hash": "hash_2",
+      "name": "mock.jpg"
+    },
+    "images": [
+      {
+        "id": 3,
+        "hash": "hash_3",
+        "name": "mock.jpg"
+      },
+      {
+        "id": 4,
+        "hash": "hash_4",
+        "name": "mock.jpg"
+      },
+      {
+        "id": 5,
+        "hash": "hash_5",
+        "name": "mock.jpg"
+      },
+      {
+        "id": 6,
+        "hash": "hash_6",
+        "name": "mock.jpg"
+      }
+    ],
     "sections": [
       {
         "id": 3,
@@ -259,12 +320,7 @@
         ]
       }
     ],
-    "rating": [
-      {
-        "user": 1,
-        "rating": 5
-      }
-    ]
+    "rating": []
   },
   {
     "id": 3,
@@ -350,12 +406,7 @@
         ]
       }
     ],
-    "rating": [
-      {
-        "user": 1,
-        "rating": 4
-      }
-    ]
+    "rating": []
   },
   {
     "id": 4,
@@ -562,16 +613,7 @@
         ]
       }
     ],
-    "rating": [
-      {
-        "user": 1,
-        "rating": 5
-      },
-      {
-        "user": 3,
-        "rating": 4
-      }
-    ]
+    "rating": []
   },
   {
     "id": 6,
@@ -704,16 +746,7 @@
         ]
       }
     ],
-    "rating": [
-      {
-        "user": 1,
-        "rating": 5
-      },
-      {
-        "user": 2,
-        "rating": 5
-      }
-    ]
+    "rating": []
   },
   {
     "id": 7,
@@ -875,16 +908,7 @@
         "steps": ["Reis gründlich kalt waschen.", "In der doppelten Menge Salzwasser nach Packungsangabe garen."]
       }
     ],
-    "rating": [
-      {
-        "user": 2,
-        "rating": 5
-      },
-      {
-        "user": 1,
-        "rating": 4
-      }
-    ]
+    "rating": []
   },
   {
     "id": 8,
@@ -993,12 +1017,7 @@
         ]
       }
     ],
-    "rating": [
-      {
-        "user": 1,
-        "rating": 4
-      }
-    ]
+    "rating": []
   },
   {
     "id": 9,
@@ -1119,16 +1138,7 @@
         ]
       }
     ],
-    "rating": [
-      {
-        "user": 3,
-        "rating": 5
-      },
-      {
-        "user": 1,
-        "rating": 5
-      }
-    ]
+    "rating": []
   },
   {
     "id": 10,
@@ -1280,12 +1290,7 @@
         ]
       }
     ],
-    "rating": [
-      {
-        "user": 1,
-        "rating": 5
-      }
-    ]
+    "rating": []
   },
   {
     "id": 11,
@@ -1422,16 +1427,7 @@
         ]
       }
     ],
-    "rating": [
-      {
-        "user": 2,
-        "rating": 5
-      },
-      {
-        "user": 1,
-        "rating": 4
-      }
-    ]
+    "rating": []
   },
   {
     "id": 12,
@@ -1574,16 +1570,7 @@
         ]
       }
     ],
-    "rating": [
-      {
-        "user": 1,
-        "rating": 4
-      },
-      {
-        "user": 2,
-        "rating": 4
-      }
-    ]
+    "rating": []
   },
   {
     "id": 13,
@@ -1728,20 +1715,7 @@
         ]
       }
     ],
-    "rating": [
-      {
-        "user": 1,
-        "rating": 5
-      },
-      {
-        "user": 2,
-        "rating": 5
-      },
-      {
-        "user": 3,
-        "rating": 4
-      }
-    ]
+    "rating": []
   },
   {
     "id": 14,
@@ -1874,11 +1848,6 @@
         ]
       }
     ],
-    "rating": [
-      {
-        "user": 3,
-        "rating": 4
-      }
-    ]
+    "rating": []
   }
 ]

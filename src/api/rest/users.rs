@@ -11,8 +11,8 @@ use crate::{
     AppState,
     error::AppError,
     models::user::{
-        ProfilePictureResponse, User, UserPutPayload, UserSearchItem, UserSearchQuery,
-        UserSearchResponse, UserUpdatePayload,
+        ProfilePictureResponse, User, UserBulkQuery, UserPutPayload, UserSearchItem,
+        UserSearchQuery, UserSearchResponse, UserUpdatePayload,
     },
     services::storage,
 };
@@ -30,6 +30,7 @@ pub fn router() -> Router<AppState> {
                 .layer(axum::extract::DefaultBodyLimit::max(8 * 1024 * 1024))
                 .delete(delete_profile_picture),
         )
+        .route("/", get(bulk_get_users))
         .route("/search", get(search_users))
 }
 
@@ -320,7 +321,7 @@ async fn search_users(
         .replace('\\', "\\\\")
         .replace('%', "\\%")
         .replace('_', "\\_");
-    let pattern = format!("%{}%", escaped);
+    let pattern = format!("%{escaped}%");
 
     let mut conn = state.pool.get().await?;
 
@@ -333,6 +334,63 @@ async fn search_users(
         .await?;
 
     let data = users
+        .into_iter()
+        .map(|(id, name, profile_picture)| UserSearchItem {
+            id,
+            name,
+            profile_picture,
+        })
+        .collect();
+
+    Ok(Json(UserSearchResponse { data }))
+}
+
+async fn bulk_get_users(
+    State(state): State<AppState>,
+    Query(query): Query<UserBulkQuery>,
+) -> Result<Json<UserSearchResponse>, AppError> {
+    // Cap at 100 ids to keep the `IN` list bounded.
+    const MAX_IDS: usize = 100;
+    // 2048 bytes comfortably fits 100 ids, and bounds the split/parse work.
+    const MAX_IDS_BYTES: usize = 2048;
+
+    let raw_ids = query.ids.as_deref().unwrap_or_default();
+
+    // Malformed segments are dropped silently: `ids=1,abc,3` → `[1, 3]`.
+    // `take(MAX_IDS + 1)` alone does not bound the work: segments that fail to
+    // parse are filtered out rather than counted, so an all-malformed value
+    // would be split and parsed end to end. Cap the raw bytes first.
+    if raw_ids.len() > MAX_IDS_BYTES {
+        return Err(AppError::Unprocessable("ids parameter too long".into()));
+    }
+
+    // Stop one past the cap so an oversized `ids` value is rejected without
+    // parsing/allocating the whole (potentially huge) query string.
+    let ids: Vec<i64> = raw_ids
+        .split(',')
+        .filter_map(|segment| segment.trim().parse::<i64>().ok())
+        .take(MAX_IDS + 1)
+        .collect();
+
+    if ids.len() > MAX_IDS {
+        return Err(AppError::Unprocessable(format!(
+            "ids accepts at most {MAX_IDS} entries"
+        )));
+    }
+
+    if ids.is_empty() {
+        return Ok(Json(UserSearchResponse { data: vec![] }));
+    }
+
+    let mut conn = state.pool.get().await?;
+
+    let rows = users::table
+        .filter(users::id.eq_any(&ids))
+        .select((users::id, users::name, users::profile_picture))
+        .load::<(i64, String, Option<String>)>(&mut conn)
+        .await?;
+
+    let data = rows
         .into_iter()
         .map(|(id, name, profile_picture)| UserSearchItem {
             id,

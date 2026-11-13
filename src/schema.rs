@@ -87,6 +87,7 @@ diesel::table! {
     recipe_editors (recipe_id, user_id) {
         recipe_id -> BigInt,
         user_id -> BigInt,
+        added_at -> Timestamptz,
     }
 }
 
@@ -94,6 +95,7 @@ diesel::table! {
     recipe_viewers (recipe_id, user_id) {
         recipe_id -> BigInt,
         user_id -> BigInt,
+        added_at -> Timestamptz,
     }
 }
 

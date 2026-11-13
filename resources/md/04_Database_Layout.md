@@ -61,9 +61,9 @@ CREATE TABLE refresh_tokens (
 CREATE INDEX idx_refresh_tokens_user ON refresh_tokens(user_id);
 ```
 
-> **Future idea (not implemented):** one-time WebSocket tickets (`ws_tickets`) were
-> sketched for short-lived WS auth. Revisit when the WS layer lands; the table is
-> currently unused. Expired/used tickets would be cleaned up by a background job.
+> **Unused today:** `ws_tickets` is created by `001_users_and_auth.sql` and mapped in `schema.rs`, but no code path
+> reads or writes it yet — it was sketched for short-lived WebSocket auth. Revisit when the WS layer lands.
+> Expired/used tickets would be cleaned up by a background job.
 
 ---
 
@@ -98,13 +98,17 @@ CREATE TABLE ingredients (
 
 ```sql
 CREATE TABLE images (
-    id   BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    hash TEXT NOT NULL UNIQUE,   -- content hash = filename on disk
-    name TEXT                     -- optional display name
+    id       BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    hash     TEXT NOT NULL UNIQUE,   -- content hash = filename on disk
+    name     TEXT,                   -- optional display name
+    owner_id BIGINT REFERENCES users(id)  -- uploader; NULL for legacy/system images
 );
+
+CREATE INDEX idx_images_owner_id ON images(owner_id);
 ```
 
-> The actual image binary lives on disk at `<storage_root>/<hash[0:2]>/<hash[2:4]>/<hash>`.
+> The actual image binary lives on disk at `<storage_root>/<hash[0:2]>/<hash[2:4]>/<hash>`. `owner_id`
+> records who uploaded the image so that only the owner may delete it.
 
 ---
 
@@ -172,6 +176,7 @@ CREATE TABLE recipe_images (
 CREATE TABLE recipe_editors (
     recipe_id BIGINT NOT NULL REFERENCES recipes(id) ON DELETE CASCADE,
     user_id   BIGINT NOT NULL REFERENCES users(id)   ON DELETE CASCADE,
+    added_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
 
     PRIMARY KEY (recipe_id, user_id)
 );
@@ -187,6 +192,7 @@ CREATE INDEX idx_recipe_editors_user ON recipe_editors(user_id);
 CREATE TABLE recipe_viewers (
     recipe_id BIGINT NOT NULL REFERENCES recipes(id) ON DELETE CASCADE,
     user_id   BIGINT NOT NULL REFERENCES users(id)   ON DELETE CASCADE,
+    added_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
 
     PRIMARY KEY (recipe_id, user_id)
 );
@@ -195,6 +201,8 @@ CREATE INDEX idx_recipe_viewers_user ON recipe_viewers(user_id);
 ```
 
 > The index on `user_id` is critical: the `GET /api/v1/recipes` endpoint queries "all recipes where user is owner OR editor OR viewer", which requires efficient lookup by user across all three roles.
+
+> `added_at` records when the user was added as editor/viewer. It powers the recipe's `myAccessSince` field (owner → `recipes.created_at`) and the optional `sort.field = "accessSince"`.
 
 ---
 
@@ -404,6 +412,19 @@ erDiagram
         bigint id PK
         text hash UK
         text name
+        bigint owner_id FK
+    }
+
+    recipe_editors {
+        bigint recipe_id PK_FK
+        bigint user_id PK_FK
+        timestamptz added_at
+    }
+
+    recipe_viewers {
+        bigint recipe_id PK_FK
+        bigint user_id PK_FK
+        timestamptz added_at
     }
 
     user_ratings {
@@ -449,6 +470,10 @@ erDiagram
 
     user_categories }o--o{ recipes : "contains (user_category_recipes)"
 ```
+
+> Pure key-pair junctions (`recipe_tags`, `recipe_images`, `user_category_recipes`, `group_members`) are drawn as
+> edges only. `recipe_editors` / `recipe_viewers` get their own blocks because they carry `added_at`, which powers
+> `myAccessSince`.
 
 ---
 
@@ -500,18 +525,13 @@ Migrations are stored in `src/db/migrations/` as sequentially numbered `.sql` fi
 
 ```
 src/db/migrations/
-├── 001_create_users.sql
-├── 002_create_tags_and_ingredients.sql
-├── 003_create_images.sql
-├── 004_create_recipes.sql
-├── 005_create_sections.sql
-├── 006_create_steps.sql
-├── 007_create_recipe_ingredients.sql
-├── 008_create_permissions.sql
-├── 009_create_ratings.sql
-├── 010_create_categories.sql
-├── 011_create_groups.sql
-├── 012_create_auth_tokens.sql
+├── 001_users_and_auth.sql        -- extensions (citext, pgcrypto, pg_trgm), users, refresh_tokens, ws_tickets
+├── 002_catalog.sql               -- tags, ingredients
+├── 003_images.sql                -- images (+ idx_images_owner_id)
+├── 004_recipes.sql               -- recipes, recipe_tags, recipe_images, sections, steps,
+│                                 -- recipe_ingredients, recipe_editors, recipe_viewers, user_ratings
+├── 005_user_organizations.sql    -- user_categories, user_category_recipes, groups, group_members
+└── 006_add_access_since.sql      -- ALTER: added_at on recipe_editors / recipe_viewers (upgrade path)
 ```
 
-Each migration is idempotent (`IF NOT EXISTS` where applicable) and runs in a transaction.
+`006_add_access_since.sql` exists purely as an idempotent upgrade for databases created before `added_at` was folded into `004_recipes.sql`; on a fresh database both produce the same schema.

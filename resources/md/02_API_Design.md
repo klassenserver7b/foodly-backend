@@ -29,8 +29,13 @@ List endpoints that can grow unbounded (like recipes) use **offset-based paginat
 
 | Parameter | Type             | Default | Description                                                        |
 |-----------|------------------|---------|--------------------------------------------------------------------|
-| `page`    | `integer`        | `1`     | The page number to fetch (1-indexed).                              |
+| `page`    | `integer`        | `1`     | The page number to fetch (1-indexed). Server clamps to `1..=10000`. |
 | `limit`   | `integer`        | `20`    | Max items per page (server caps at 100).                           |
+
+Values outside those ranges are clamped rather than rejected, so an
+out-of-range page yields an empty list instead of an error. Because the offset
+is `(page - 1) * limit`, the page ceiling keeps deep-OFFSET scans bounded and
+prevents integer overflow in the offset computation.
 
 Response wrapper:
 
@@ -41,7 +46,8 @@ Response wrapper:
 }
 ```
 
-Small, bounded catalogs (`/tags`, `/ingredients`) return a flat array (no pagination).
+Small, bounded catalogs (`/tags`, `/ingredients`) are not paginated but still use the
+`{"data": [...]}` envelope (`CatalogResponse<T>`), without a `cursor` field.
 
 ### Error Envelope
 
@@ -50,7 +56,7 @@ All error responses use:
 ```json
 {
   "error": {
-    "code": "RECIPE_NOT_FOUND",
+    "code": "NOT_FOUND",
     "message": "Recipe with id 42 does not exist."
   }
 }
@@ -60,7 +66,8 @@ Standard status codes used: `400` (validation), `401` (unauthenticated), `403` (
 
 ### Timestamps
 
-All timestamps are ISO 8601 UTC strings (`"2026-01-15T14:30:00Z"`).
+All timestamps are ISO 8601 UTC strings using the `+00:00` offset form
+(`"2026-01-15T14:30:00+00:00"`).
 
 ---
 
@@ -213,6 +220,27 @@ Update the authenticated user's profile fields. Only provided fields are updated
 
 ---
 
+### `PUT /api/v1/users/me`
+
+Full replacement of the authenticated user's profile core fields. Unlike `PATCH`,
+both `name` and `email` are **required** — omitting either one fails body
+deserialization rather than silently keeping the old value.
+
+**Request:**
+```json
+{
+  "name": "Kolja M.",
+  "email": "kolja@example.com"
+}
+```
+
+**Response `200 OK`:** *(returns the full updated user object, same shape as `GET /users/me`)*
+
+**Errors:**
+- `422 Unprocessable` — `name` or `email` empty.
+
+---
+
 ### `PUT /api/v1/users/me/profile-picture`
 
 Upload or replace the user's profile picture. Body is the raw image binary (`Content-Type: image/jpeg`, `image/png`, or `image/webp`).
@@ -262,7 +290,44 @@ Search for users by name (or partial name) for use in "invite to recipe" or "add
 > The authenticated user (the one performing the search) is **excluded** from results — you don't invite yourself.
 
 **Errors:**
-- `400 Bad Request` — `q` is missing or empty.
+- `400 Bad Request` — the `q` query parameter is missing entirely. Rejected by the axum `Query` extractor *before* the handler runs, so the body is the extractor's own message (`Failed to deserialize query string: missing field q`), not the usual error envelope.
+- `422 Unprocessable` — `q` is present but empty (`?q=`); the handler rejects it with `"q cannot be empty"`.
+
+---
+
+## Bulk User Lookup
+
+### `GET /api/v1/users?ids=2,3,5`
+
+Resolve a set of user ids to compact display data in a single request. The frontend uses this to render `owner`, `editors`, `viewers`, and `rating[].user` names from the id references returned by the recipe endpoints (replaces the client-side `listUsers` mock).
+
+**Query parameters:**
+
+| Parameter | Type     | Required | Description                                                        |
+|-----------|----------|----------|--------------------------------------------------------------------|
+| `ids`     | `string` | yes      | Comma-separated user ids, e.g. `2,3,5`. Whitespace around ids is ignored. |
+
+Malformed segments are **dropped silently** (`ids=1,abc,3` → `[1, 3]`). A missing or empty `ids` parameter returns an empty list rather than an error.
+
+**Bounds:** at most **100** ids per request, and the raw `ids` parameter may not
+exceed **2048 bytes** (`422 Unprocessable` beyond either limit — the byte cap
+keeps the split/parse work bounded).
+
+**Response `200 OK`:**
+```json
+{
+  "data": [
+    { "id": 2, "name": "Mara", "profilePicture": "c4f1..." },
+    { "id": 3, "name": "Jonas", "profilePicture": null }
+  ]
+}
+```
+
+> Same compact shape as `GET /users/search` — `id`, `name`, `profilePicture` only. Email addresses are **never** included. Unknown ids are omitted from the result. Order is not guaranteed.
+
+**Errors:**
+- `401 Unauthorized` — missing/invalid access token.
+- `422 Unprocessable` — more than 100 ids, or an `ids` parameter longer than 2048 bytes.
 
 ---
 
@@ -273,8 +338,8 @@ Search for users by name (or partial name) for use in "invite to recipe" or "add
 Fetch a paginated list of all recipes accessible to the authenticated user. This is a fast, highly-cacheable endpoint designed for the initial catalog load. It internally uses the same logic as the search endpoint but accepts only pagination parameters in the query string.
 
 **Query parameters:**
-- `page` (integer, default: 1)
-- `limit` (integer, default: 20)
+- `page` (integer, default: 1, max: 10_000)
+- `limit` (integer, default: 20, max: 100)
 
 **Response `200 OK`:** *(Returns the same paginated `RecipePreview` list structure as `POST /api/v1/recipes/search`)*
 
@@ -285,8 +350,8 @@ Fetch a paginated list of all recipes accessible to the authenticated user. This
 Search and list recipes accessible to the authenticated user (owned + shared as editor/viewer). Allows filtering by tags, categories, ingredients, max work time, access rights, and share states. Also supports dynamic sorting (e.g. by rating, name, total time) and uses offset-based pagination. Returns **preview data** — a subset of fields optimized for the list view. Sections, ingredients, steps, and notes are **not** included. If the request body is omitted or empty (`{}`), it behaves identically to a fetch-all endpoint.
 
 **Query parameters:**
-- `page` (integer, default: 1)
-- `limit` (integer, default: 20)
+- `page` (integer, default: 1, max: 10_000)
+- `limit` (integer, default: 20, max: 100)
 
 **Request:**
 ```json
@@ -300,12 +365,12 @@ Search and list recipes accessible to the authenticated user (owned + shared as 
     "shareStates": ["private", "shared", "collaborative"]
   },
   "sort": {
-    "field": "rating", // "name", "work_time", "total_time", "rating"
+    "field": "rating", // "name", "workTime" | "work_time", "totalTime" | "total_time", "rating", "accessSince"
     "order": "desc"    // "asc", "desc"
   }
 }
 ```
-*(All fields are optional. Filters use strict AND logic where arrays are provided.)*
+*(All fields are optional. Filters use strict AND logic where arrays are provided. The ID/string filter arrays (`categories`, `tags`, `ingredients`) accept at most **100** entries; the enum filter arrays (`accessRights`, `shareStates`) accept at most **10** entries (duplicates are deduped and there are only three variants each). Requests exceeding a cap are rejected with `422 Unprocessable` (`"categories accepts at most 100 entries"`, `"accessRights accepts at most 10 entries"`, etc.). Sort fields are case-sensitive; the snake_case spellings `work_time` and `total_time` are accepted as aliases of `workTime` and `totalTime`.)*
 
 **Response `200 OK`:**
 ```json
@@ -319,18 +384,16 @@ Search and list recipes accessible to the authenticated user (owned + shared as 
       "name": "Spaghetti Bolognese",
       "tags": ["Hauptgericht", "Italienisch"],
       "source": "https://example.com/bolognese",
-      "rating": [
-        { "user": 1, "rating": 5 },
-        { "user": 2, "rating": 4 }
-      ],
+      "rating": [],
       "time": "45 min",
       "workMinutes": 20,
       "overallMinutes": 45,
       "sizeNumber": 4,
       "sizeText": "{Portionen}",
-      "mainImage": 1,
-      "createdAt": "2026-01-10T12:00:00Z",
-      "updatedAt": "2026-03-15T09:30:00Z"
+      "mainImage": { "id": 1, "hash": "a3f8c2d1e5...", "name": null },
+      "createdAt": "2026-01-10T12:00:00+00:00",
+      "updatedAt": "2026-03-15T09:30:00+00:00",
+      "myAccessSince": "2026-02-01T08:15:00+00:00"
     }
   ],
   "cursor": "2"
@@ -338,6 +401,14 @@ Search and list recipes accessible to the authenticated user (owned + shared as 
 ```
 
 > **Scope:** The backend **only returns recipes where the user is `owner`, `editor`, or `viewer`**. The frontend does not need to filter by access itself. The `cursor` in the response represents the next page number as a string, or `null` if there are no more pages.
+
+> **`myAccessSince`:** when the *requesting* user gained access to the recipe. For the `owner` it equals `createdAt`; for an `editor`/`viewer` it is the join-table `added_at` timestamp (editor wins if a user appears in both lists). Use it for "recently shared with you" ordering; `sort.field = "accessSince"` orders by the same value.
+
+**Errors:**
+- `400 Bad Request` — malformed query string (`page` / `limit` not integers), or a request body that is not valid JSON syntax. Both are rejected by the axum extractors before the handler runs.
+- `415 Unsupported Media Type` — a body was sent without `Content-Type: application/json`.
+- `401 Unauthorized` — missing/invalid access token.
+- `422 Unprocessable` — a filter array exceeds its cap (see above), a body field has the wrong type, or `sort.field` is not a known field. The sort error message lists the accepted spellings and repeats the rejected value, e.g. `sort.field must be one of name, workTime, work_time, totalTime, total_time, rating, accessSince (got "worktime")`. Unknown sort fields are rejected rather than silently falling back to ordering by id.
 
 ---
 
@@ -355,18 +426,18 @@ Get a single recipe with **full data** including sections, ingredients, steps, n
   "name": "Spaghetti Bolognese",
   "tags": ["Hauptgericht", "Italienisch"],
   "source": "https://example.com/bolognese",
-  "rating": [
-    { "user": 1, "rating": 5 },
-    { "user": 2, "rating": 4 }
-  ],
+  "rating": [],
   "time": "45 min",
   "workMinutes": 20,
   "overallMinutes": 45,
   "sizeNumber": 4,
   "sizeText": "{Portionen}",
   "notes": ["Am besten mit frischem Basilikum servieren."],
-  "mainImage": 1,
-  "images": [2, 3],
+  "mainImage": { "id": 1, "hash": "a3f8c2d1e5...", "name": null },
+  "images": [
+    { "id": 2, "hash": "b2e4f6a8c1...", "name": null },
+    { "id": 3, "hash": "c3d5e7f9b2...", "name": null }
+  ],
   "sections": [
     {
       "id": 1,
@@ -395,14 +466,17 @@ Get a single recipe with **full data** including sections, ingredients, steps, n
       ]
     }
   ],
-  "createdAt": "2026-01-10T12:00:00Z",
-  "updatedAt": "2026-03-15T09:30:00Z"
+  "createdAt": "2026-01-10T12:00:00+00:00",
+  "updatedAt": "2026-03-15T09:30:00+00:00",
+  "myAccessSince": "2026-01-10T12:00:00+00:00"
 }
 ```
 
 **Errors:**
 - `404 Not Found` — recipe does not exist.
 - `403 Forbidden` — user is not owner/editor/viewer.
+
+> `myAccessSince` follows the same semantics as in the previews: owner → `createdAt`, editor/viewer → the join-table `added_at`.
 
 ---
 
@@ -444,7 +518,11 @@ Create a new recipe. The authenticated user becomes the `owner`.
 
 > Note: In the create/update request, `ingredient` is just the `IngredientId` (a number) or `null`. The server expands it to `{ id, name }` in responses.
 
-**Response `201 Created`:** *(full recipe object, same shape as `GET /recipes/:id`)*
+> The same id → object expansion applies to images: requests send `mainImage` / `images`
+> as image ids (or `null` / `[]`), while responses return full `ImageRef` objects
+> `{ id, hash, name }` (`mainImage` is `null` when unset).
+
+**Response `200 OK`:** *(full recipe object, same shape as `GET /recipes/:id`)*
 
 **Errors:**
 - `422 Unprocessable` — validation failure (empty name, etc.).
@@ -483,7 +561,7 @@ Create a personal copy of a recipe. The authenticated user becomes the owner of 
 
 **Request:** *(empty body)*
 
-**Response `201 Created`:** *(full recipe object of the new copy)*
+**Response `200 OK`:** *(full recipe object of the new copy)*
 
 ---
 
@@ -580,6 +658,13 @@ Categories are **per-user** — each user has their own set. The authenticated u
 
 List all categories of the authenticated user, ordered by `order`.
 
+**Query parameters:**
+
+| Parameter | Type     | Required | Description                                                        |
+|-----------|----------|----------|--------------------------------------------------------------------|
+| `page`    | `int`    | no       | 1-based page number (default: `1`).                                |
+| `limit`   | `int`    | no       | Page size (default: `20`, max: `100`).                             |
+
 **Response `200 OK`:**
 ```json
 {
@@ -594,9 +679,12 @@ List all categories of the authenticated user, ordered by `order`.
       "colorLight": null,
       "colorDark": null
     }
-  ]
+  ],
+  "cursor": "2"
 }
 ```
+
+> `cursor` is the next `page` number when more data is available, otherwise `null`. Pass it back as `page` to fetch the next page.
 
 ---
 
@@ -614,7 +702,7 @@ Create a new category.
 }
 ```
 
-**Response `201 Created`:** *(full category object; `recipes` starts as `[]`, `order` is auto-assigned)*
+**Response `200 OK`:** *(full category object; `recipes` starts as `[]`, `order` is auto-assigned)*
 
 ---
 
@@ -651,6 +739,8 @@ Delete a category. Recipes in it are **not** deleted; they become uncategorized.
 
 Set the ordered list of recipe IDs in this category (replaces the current list).
 
+**Bound:** at most **500** recipe IDs per request (`422 Unprocessable` beyond that).
+
 **Request:**
 ```json
 {
@@ -666,13 +756,15 @@ Set the ordered list of recipe IDs in this category (replaces the current list).
 ```
 
 **Errors:**
-- `422 Unprocessable` — recipe IDs that the user doesn't have access to.
+- `422 Unprocessable` — recipe IDs that the user doesn't have access to, or more than 500 recipe IDs in the request.
 
 ---
 
 ### `PUT /api/v1/categories/order`
 
 Reorder all categories at once. Expects the full list of category IDs in the desired order.
+
+**Bound:** at most **100** category IDs per request (`422 Unprocessable` beyond that).
 
 **Request:**
 ```json
@@ -811,7 +903,9 @@ Images are stored on the server's disk, addressed by content hash. The database 
 
 Upload an image. **Requires authentication** (`Authorization: Bearer <token>`). The uploader is recorded as `owner_id`. Body is the raw image binary (`Content-Type: image/jpeg`, `image/png`, or `image/webp`) — not multipart. The format is detected from magic bytes, not the request header. Max body size: 8 MiB.
 
-**Response `201 Created`:**
+**Response `201 Created`** for a new image, **`200 OK`** when re-uploading identical
+bytes (the content hash already exists, so the existing row is returned — the upload
+is idempotent):
 ```json
 {
   "id": 7,
@@ -819,8 +913,6 @@ Upload an image. **Requires authentication** (`Authorization: Bearer <token>`). 
   "name": null
 }
 ```
-
-Re-uploading identical bytes is idempotent: the content hash already exists, so the existing row is returned.
 
 **Errors:**
 - `401 Unauthorized` — missing or invalid access token.
@@ -909,13 +1001,13 @@ Submit an offline change backlog. The server processes changes sequentially, app
     {
       "type": "recipe.update",
       "recipeId": 1,
-      "timestamp": "2026-06-28T10:00:00Z",
+      "timestamp": "2026-06-28T10:00:00+00:00",
       "data": { "name": "Spaghetti Bolognese (updated)" }
     },
     {
       "type": "recipe.create",
       "tempId": "tmp-abc-123",
-      "timestamp": "2026-06-28T10:01:00Z",
+      "timestamp": "2026-06-28T10:01:00+00:00",
       "data": { "name": "Neues Rezept", "...": "..." }
     }
   ]
@@ -1069,10 +1161,13 @@ CORS_ALLOWED_ORIGINS=https://app.example.com
 | `DELETE` | `/api/v1/auth/sessions`              | yes  | Logout all sessions                              |
 | `GET`    | `/api/v1/users/me`                    | yes  | Current user profile                             |
 | `PATCH`  | `/api/v1/users/me`                    | yes  | Update own profile                               |
+| `PUT`    | `/api/v1/users/me`                    | yes  | Replace own profile (name + email required)      |
 | `PUT`    | `/api/v1/users/me/profile-picture`    | yes  | Upload/replace profile picture                   |
 | `DELETE` | `/api/v1/users/me/profile-picture`    | yes  | Remove profile picture                           |
 | `GET`    | `/api/v1/users/search?q=...`          | yes  | Search users by name (invite dropdown)           |
+| `GET`    | `/api/v1/users?ids=2,3,5`             | yes  | Bulk user lookup (id → name/picture)             |
 | `GET`    | `/api/v1/recipes`                     | yes  | List recipes (preview, paginated)                |
+| `POST`   | `/api/v1/recipes/search`              | yes  | Search/filter/sort recipes (preview, paginated)  |
 | `GET`    | `/api/v1/recipes/:id`                 | yes  | Get full recipe                                  |
 | `POST`   | `/api/v1/recipes`                     | yes  | Create recipe                                    |
 | `PUT`    | `/api/v1/recipes/:id`                 | yes  | Update recipe                                    |

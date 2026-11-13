@@ -27,6 +27,12 @@ pub struct UserSearchQuery {
     pub limit: Option<i64>,
 }
 
+/// Query for the bulk lookup: comma-separated ids (`?ids=2,3,5`).
+#[derive(Debug, Deserialize)]
+pub struct UserBulkQuery {
+    pub ids: Option<String>,
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UserSearchItem {

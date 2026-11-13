@@ -1,4 +1,4 @@
-use crate::api::rest::recipes::{PaginatedResponse, PaginationQuery};
+use crate::api::rest::recipes::{MAX_PAGE, PaginatedResponse, PaginationQuery};
 use crate::models::category::{
     Category, CategoryOrderPair, CategoryOrderResponse, CreateCategory, ReorderCategories,
     UpdateCategoryRecipes,
@@ -11,7 +11,7 @@ use axum::{
 };
 use diesel::prelude::*;
 use diesel::result::OptionalExtension;
-use diesel_async::{AsyncPgConnection, RunQueryDsl};
+use diesel_async::{AsyncConnection, AsyncPgConnection, RunQueryDsl};
 
 use crate::schema::user_categories;
 use crate::schema::user_category_recipes;
@@ -22,6 +22,15 @@ use crate::schema::user_category_recipes;
 struct CountRow {
     #[diesel(sql_type = diesel::sql_types::BigInt)]
     count: i64,
+}
+
+/// Row shape for the bulk reorder `UPDATE ... RETURNING` query.
+#[derive(Debug, QueryableByName)]
+struct ReorderedRow {
+    #[diesel(sql_type = diesel::sql_types::BigInt)]
+    id: i64,
+    #[diesel(sql_type = diesel::sql_types::Integer)]
+    sort_order: i32,
 }
 
 pub fn router() -> Router<AppState> {
@@ -39,7 +48,7 @@ async fn list_categories(
 ) -> Result<Json<PaginatedResponse<Category>>, AppError> {
     let u_id = user_id;
     let limit = pagination.limit.unwrap_or(20).min(100);
-    let page = pagination.page.unwrap_or(1).max(1);
+    let page = pagination.page.unwrap_or(1).clamp(1, MAX_PAGE);
     let offset = (page - 1) * limit;
 
     let mut conn = state.pool.get().await?;
@@ -66,29 +75,51 @@ async fn list_categories(
         records.pop();
     }
 
-    let mut data = Vec::with_capacity(records.len());
-    for rec in records {
-        // Fetch recipes for this category
-        let recipes: Vec<i64> = user_category_recipes::table
-            .filter(user_category_recipes::category_id.eq(rec.0))
-            .order(user_category_recipes::position.asc())
-            .select(user_category_recipes::recipe_id)
+    // Load the recipes of every category on this page in one round-trip and
+    // group them in memory, instead of one SELECT per category.
+    let category_ids: Vec<i64> = records.iter().map(|r| r.0).collect();
+    let mut recipes_by_category: std::collections::HashMap<i64, Vec<i64>> =
+        std::collections::HashMap::with_capacity(category_ids.len());
+
+    if !category_ids.is_empty() {
+        let rows: Vec<(i64, i64)> = user_category_recipes::table
+            .filter(user_category_recipes::category_id.eq_any(&category_ids))
+            .order_by((
+                user_category_recipes::category_id.asc(),
+                user_category_recipes::position.asc(),
+            ))
+            .select((
+                user_category_recipes::category_id,
+                user_category_recipes::recipe_id,
+            ))
             .load(&mut conn)
             .await?;
 
-        data.push(Category {
-            id: rec.0 as i32,
-            user: rec.1 as i32,
+        for (category_id, recipe_id) in rows {
+            recipes_by_category
+                .entry(category_id)
+                .or_default()
+                .push(recipe_id);
+        }
+    }
+
+    let data = records
+        .into_iter()
+        .map(|rec| Category {
+            id: rec.0,
+            user: rec.1,
             name: rec.2.clone(),
-            recipes: recipes.into_iter().map(|v| v as i32).collect(),
+            recipes: recipes_by_category.remove(&rec.0).unwrap_or_default(),
             order: rec.3.unwrap_or(0),
             color: rec.4.clone(),
             color_light: rec.5.clone(),
             color_dark: rec.6.clone(),
-        });
-    }
+        })
+        .collect();
 
-    let cursor = if has_more {
+    // Stop emitting cursors at the page ceiling, otherwise a client following
+    // them would be pinned to the last allowed page and loop forever.
+    let cursor = if has_more && page < MAX_PAGE {
         Some((page + 1).to_string())
     } else {
         None
@@ -141,7 +172,7 @@ async fn create_category(
 async fn update_category(
     State(state): State<AppState>,
     Extension(user_id): Extension<i64>,
-    Path(id): Path<i32>,
+    Path(id): Path<i64>,
     Json(payload): Json<CreateCategory>,
 ) -> Result<Json<Category>, AppError> {
     if payload.name.is_empty() {
@@ -151,12 +182,11 @@ async fn update_category(
         return Err(AppError::Unprocessable("Color cannot be empty".into()));
     }
 
-    let c_id = id as i64;
     let u_id = user_id;
     let mut conn = state.pool.get().await?;
 
     let res = diesel::update(user_categories::table)
-        .filter(user_categories::id.eq(c_id))
+        .filter(user_categories::id.eq(id))
         .filter(user_categories::user_id.eq(u_id))
         .set((
             user_categories::name.eq(payload.name.clone()),
@@ -171,21 +201,20 @@ async fn update_category(
         return Err(AppError::NotFound("Category not found".into()));
     }
 
-    let category = fetch_category(&mut conn, c_id).await?;
+    let category = fetch_category(&mut conn, id).await?;
     Ok(Json(category))
 }
 
 async fn delete_category(
     State(state): State<AppState>,
     Extension(user_id): Extension<i64>,
-    Path(id): Path<i32>,
+    Path(id): Path<i64>,
 ) -> Result<axum::http::StatusCode, AppError> {
-    let c_id = id as i64;
     let u_id = user_id;
     let mut conn = state.pool.get().await?;
 
     let res = diesel::delete(user_categories::table)
-        .filter(user_categories::id.eq(c_id))
+        .filter(user_categories::id.eq(id))
         .filter(user_categories::user_id.eq(u_id))
         .execute(&mut conn)
         .await?;
@@ -197,19 +226,28 @@ async fn delete_category(
     Ok(axum::http::StatusCode::NO_CONTENT)
 }
 
+/// Upper bound on the recipe IDs accepted in one update request, keeping the
+/// single bulk INSERT's statement size bounded.
+const MAX_RECIPE_IDS: usize = 500;
+
 async fn update_category_recipes(
     State(state): State<AppState>,
     Extension(user_id): Extension<i64>,
-    Path(id): Path<i32>,
+    Path(id): Path<i64>,
     Json(payload): Json<UpdateCategoryRecipes>,
 ) -> Result<Json<Category>, AppError> {
-    let c_id = id as i64;
+    if payload.recipe_ids.len() > MAX_RECIPE_IDS {
+        return Err(AppError::Unprocessable(format!(
+            "recipeIds accepts at most {MAX_RECIPE_IDS} entries"
+        )));
+    }
+
     let u_id = user_id;
     let mut conn = state.pool.get().await?;
 
     // Verify category belongs to user
     let category_exists = user_categories::table
-        .filter(user_categories::id.eq(c_id))
+        .filter(user_categories::id.eq(id))
         .filter(user_categories::user_id.eq(u_id))
         .select(user_categories::id)
         .first::<i64>(&mut conn)
@@ -221,78 +259,119 @@ async fn update_category_recipes(
         return Err(AppError::NotFound("Category not found".into()));
     }
 
-    // Verify user has access to all recipes (owner, editor, or viewer)
-    if !payload.recipe_ids.is_empty() {
-        let r_ids: Vec<i64> = payload.recipe_ids.iter().map(|id| *id as i64).collect();
+    // Replace the mapping atomically: a failure between DELETE and INSERT
+    // must not leave the category emptied.
+    let category = conn
+        .transaction::<_, AppError, _>(async |conn| {
+            // Verify user has access to all recipes (owner, editor, or viewer).
+            // Must run inside this transaction so a share revoked concurrently
+            // cannot slip a mapping row in between the check and the INSERT.
+            if !payload.recipe_ids.is_empty() {
+                let r_ids: Vec<i64> = payload.recipe_ids.to_vec();
 
-        let count = diesel::sql_query(
-            r#"
-            SELECT COUNT(DISTINCT r.id) AS count
-            FROM recipes r
-            LEFT JOIN recipe_editors e ON r.id = e.recipe_id
-            LEFT JOIN recipe_viewers v ON r.id = v.recipe_id
-            WHERE r.id = ANY($1)
-              AND (r.owner_id = $2 OR e.user_id = $2 OR v.user_id = $2)
-            "#,
-        )
-        .bind::<diesel::sql_types::Array<diesel::sql_types::BigInt>, _>(&r_ids)
-        .bind::<diesel::sql_types::BigInt, _>(u_id)
-        .get_result::<CountRow>(&mut conn)
+                let count = diesel::sql_query(
+                    r"
+                    SELECT COUNT(DISTINCT r.id) AS count
+                    FROM recipes r
+                    LEFT JOIN recipe_editors e ON r.id = e.recipe_id
+                    LEFT JOIN recipe_viewers v ON r.id = v.recipe_id
+                    WHERE r.id = ANY($1)
+                      AND (r.owner_id = $2 OR e.user_id = $2 OR v.user_id = $2)
+                    ",
+                )
+                .bind::<diesel::sql_types::Array<diesel::sql_types::BigInt>, _>(&r_ids)
+                .bind::<diesel::sql_types::BigInt, _>(u_id)
+                .get_result::<CountRow>(conn)
+                .await?;
+
+                if count.count != r_ids.len() as i64 {
+                    return Err(AppError::Unprocessable(
+                        "One or more recipes not accessible".into(),
+                    ));
+                }
+            }
+
+            diesel::delete(user_category_recipes::table)
+                .filter(user_category_recipes::category_id.eq(id))
+                .execute(conn)
+                .await?;
+
+            let values: Vec<_> = payload
+                .recipe_ids
+                .iter()
+                .enumerate()
+                .map(|(i, r_id)| {
+                    (
+                        user_category_recipes::category_id.eq(id),
+                        user_category_recipes::recipe_id.eq(*r_id),
+                        user_category_recipes::position.eq(i as i32),
+                    )
+                })
+                .collect();
+
+            diesel::insert_into(user_category_recipes::table)
+                .values(&values)
+                .execute(conn)
+                .await?;
+
+            fetch_category(conn, id).await
+        })
         .await?;
 
-        if count.count != r_ids.len() as i64 {
-            return Err(AppError::Unprocessable(
-                "One or more recipes not accessible".into(),
-            ));
-        }
-    }
-
-    // Delete existing mapping
-    diesel::delete(user_category_recipes::table)
-        .filter(user_category_recipes::category_id.eq(c_id))
-        .execute(&mut conn)
-        .await?;
-
-    // Insert new mapping
-    for (i, r_id) in payload.recipe_ids.iter().enumerate() {
-        diesel::insert_into(user_category_recipes::table)
-            .values((
-                user_category_recipes::category_id.eq(c_id),
-                user_category_recipes::recipe_id.eq(*r_id as i64),
-                user_category_recipes::position.eq(i as i32),
-            ))
-            .execute(&mut conn)
-            .await?;
-    }
-
-    let category = fetch_category(&mut conn, c_id).await?;
     Ok(Json(category))
 }
+
+/// Upper bound on the category IDs accepted in one reorder request.
+/// The handler updates all rows in a single statement, so the cap keeps
+/// the statement (and its bound arrays) reasonably small.
+const MAX_REORDER_IDS: usize = 100;
 
 async fn reorder_categories(
     State(state): State<AppState>,
     Extension(user_id): Extension<i64>,
     Json(payload): Json<ReorderCategories>,
 ) -> Result<Json<CategoryOrderResponse>, AppError> {
+    if payload.category_ids.len() > MAX_REORDER_IDS {
+        return Err(AppError::Unprocessable(format!(
+            "categoryIds accepts at most {MAX_REORDER_IDS} entries"
+        )));
+    }
+
     let u_id = user_id;
     let mut conn = state.pool.get().await?;
-    let mut data = Vec::with_capacity(payload.category_ids.len());
 
-    for (i, cat_id) in payload.category_ids.iter().enumerate() {
-        let c_id = *cat_id as i64;
-        let order = i as i32;
+    let ids: Vec<i64> = payload.category_ids;
+    let ords: Vec<i32> = (0..ids.len() as i32).collect();
 
-        let res = diesel::update(user_categories::table)
-            .filter(user_categories::id.eq(c_id))
-            .filter(user_categories::user_id.eq(u_id))
-            .set(user_categories::sort_order.eq(order))
-            .execute(&mut conn)
-            .await?;
+    // One round-trip instead of one UPDATE per category id. `unnest` turns the
+    // two bound arrays into the (id, ord) value list; every parameter is bound,
+    // so nothing user-controlled is interpolated into the SQL.
+    let mut rows = diesel::sql_query(
+        r"
+        UPDATE user_categories AS uc
+        SET sort_order = v.ord
+        FROM unnest($1::bigint[], $2::int[]) AS v(id, ord)
+        WHERE uc.id = v.id AND uc.user_id = $3
+        RETURNING uc.id, uc.sort_order
+        ",
+    )
+    .bind::<diesel::sql_types::Array<diesel::sql_types::BigInt>, _>(&ids)
+    .bind::<diesel::sql_types::Array<diesel::sql_types::Integer>, _>(&ords)
+    .bind::<diesel::sql_types::BigInt, _>(u_id)
+    .get_results::<ReorderedRow>(&mut conn)
+    .await?;
 
-        if res > 0 {
-            data.push(CategoryOrderPair { id: *cat_id, order });
-        }
-    }
+    // RETURNING has no defined row order; `sort_order` carries the payload
+    // position, so sorting by it restores the caller's ordering.
+    rows.sort_by_key(|row| row.sort_order);
+
+    let data = rows
+        .into_iter()
+        .map(|row| CategoryOrderPair {
+            id: row.id,
+            order: row.sort_order,
+        })
+        .collect();
 
     Ok(Json(CategoryOrderResponse { data }))
 }
@@ -321,10 +400,10 @@ async fn fetch_category(conn: &mut AsyncPgConnection, id: i64) -> Result<Categor
         .await?;
 
     Ok(Category {
-        id: rec.0 as i32,
-        user: rec.1 as i32,
+        id: rec.0,
+        user: rec.1,
         name: rec.2.clone(),
-        recipes: recipes.into_iter().map(|v| v as i32).collect(),
+        recipes,
         order: rec.3.unwrap_or(0),
         color: rec.4.clone(),
         color_light: rec.5.clone(),

@@ -36,6 +36,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("migrations/003_images.sql"),
     include_str!("migrations/004_recipes.sql"),
     include_str!("migrations/005_user_organizations.sql"),
+    include_str!("migrations/006_add_access_since.sql"),
 ];
 
 /// Initializes the diesel-async connection pool and applies pending migrations.
@@ -49,7 +50,7 @@ pub async fn init_pool() -> anyhow::Result<DbPool> {
         let db = env::var("POSTGRES_DB").unwrap_or_else(|_| "foodly".to_string());
         let host = env::var("POSTGRES_HOST").unwrap_or_else(|_| "localhost".to_string());
         let port = env::var("POSTGRES_PORT").unwrap_or_else(|_| "5432".to_string());
-        format!("postgres://{}:{}@{}:{}/{}", user, password, host, port, db)
+        format!("postgres://{user}:{password}@{host}:{port}/{db}")
     });
 
     let config = AsyncDieselConnectionManager::<AsyncPgConnection>::new(database_url);
