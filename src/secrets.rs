@@ -42,7 +42,8 @@ pub fn bootstrap_secrets() {
 }
 
 /// Generates `key` if unset or empty; persists the new value and exports
-/// it for this process. If the secret is set but too short (<32 chars),
+/// it for this process.
+/// If the secret is set but too short (<32 chars),
 /// this PANICS instead of regenerating — silently replacing an
 /// operator-supplied secret breaks every password hash created with it.
 pub fn bootstrap_secret(key: &str) {

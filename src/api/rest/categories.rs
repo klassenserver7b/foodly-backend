@@ -267,7 +267,7 @@ async fn update_category_recipes(
             // Must run inside this transaction so a share revoked concurrently
             // cannot slip a mapping row in between the check and the INSERT.
             if !payload.recipe_ids.is_empty() {
-                let r_ids: Vec<i64> = payload.recipe_ids.to_vec();
+                let r_ids: Vec<i64> = payload.recipe_ids.clone();
 
                 let count = diesel::sql_query(
                     r"

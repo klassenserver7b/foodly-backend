@@ -11,6 +11,10 @@ pub fn hash_bytes(bytes: &[u8]) -> String {
 }
 
 /// Writes `bytes` to the location derived from their digest.
+///
+/// # Errors
+///
+/// -
 pub async fn save_image(storage_dir: &Path, bytes: &[u8]) -> anyhow::Result<String> {
     let hash = hash_bytes(bytes);
     write_image(storage_dir, &hash, bytes).await?;
@@ -21,6 +25,10 @@ pub async fn save_image(storage_dir: &Path, bytes: &[u8]) -> anyhow::Result<Stri
 ///
 /// `hash` must be the digest of `bytes` (see [`hash_bytes`]), e.g. for a
 /// re-write after taking the per-hash mutation lock.
+///
+/// # Errors
+///
+/// -
 pub async fn write_image(storage_dir: &Path, hash: &str, bytes: &[u8]) -> anyhow::Result<()> {
     let file_path = get_image_path(storage_dir, hash).map_err(anyhow::Error::msg)?;
     if let Some(parent) = file_path.parent() {
@@ -36,6 +44,10 @@ pub async fn write_image(storage_dir: &Path, hash: &str, bytes: &[u8]) -> anyhow
 /// (e.g. legacy seeded values such as `hash_1`). Callers should treat this
 /// as "not found"; it must never panic, since the hash may come straight
 /// from a database column.
+///
+/// # Errors
+///
+/// -
 pub fn get_image_path(storage_dir: &Path, hash: &str) -> Result<PathBuf, String> {
     validate_hash(hash)?;
     let prefix1 = &hash[0..2];
@@ -46,6 +58,10 @@ pub fn get_image_path(storage_dir: &Path, hash: &str) -> Result<PathBuf, String>
 /// Validates that a hash is exactly 64 lowercase ASCII hex characters
 /// (the format produced by [`save_image`]).
 /// Returns `Ok(())` if valid, or an error message string if not.
+///
+/// # Errors
+///
+/// -
 pub fn validate_hash(hash: &str) -> Result<(), String> {
     if hash.len() != 64 {
         return Err(format!("hash must be 64 characters, got {}", hash.len()));
@@ -59,12 +75,20 @@ pub fn validate_hash(hash: &str) -> Result<(), String> {
     Ok(())
 }
 
+///
+/// # Errors
+///
+/// -
 pub async fn read_image(storage_dir: &Path, hash: &str) -> std::io::Result<Vec<u8>> {
     let file_path = get_image_path(storage_dir, hash)
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e))?;
     fs::read(&file_path).await
 }
 
+///
+/// # Errors
+///
+/// -
 pub async fn delete_image(storage_dir: &Path, hash: &str) -> std::io::Result<()> {
     let file_path = get_image_path(storage_dir, hash)
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e))?;

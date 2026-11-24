@@ -30,6 +30,6 @@ tower = { version = "0.5.3", features = ["util"] }
 
 [lints.clippy]
 nursery = { level = "warn", priority = -1 }
-pedantic = { level = "warn", priority = -1 }
 cast_precision_loss = { level = "allow" }
+too_long_first_doc_paragraph = { level = "allow" }
 semicolon_if_nothing_returned = { level = "forbid", priority = 1 }

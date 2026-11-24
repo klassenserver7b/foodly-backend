@@ -61,7 +61,7 @@ pub fn router() -> Router<AppState> {
 }
 
 /// Hard ceiling for the `page` query parameter. `offset = (page - 1) * limit`
-/// walks and discards every skipped row, so an unbounded page is a cheap DoS
+/// walks and discards every skipped row, so an unbounded page is a cheap `DoS`
 /// lever — and `page = i64::MAX` would overflow the offset computation.
 pub const MAX_PAGE: i64 = 10_000;
 
@@ -418,7 +418,7 @@ fn validate_filter_limits(filters: &RecipeFilters) -> Result<(), AppError> {
     Ok(())
 }
 
-/// Sort fields `fetch_recipes` knows how to translate into SQL. The snake_case
+/// Sort fields `fetch_recipes` knows how to translate into SQL. The `snake_case`
 /// spellings are long-standing aliases and stay accepted; misspellings such as
 /// "worktime" are not.
 const SORT_FIELDS: &[&str] = &[

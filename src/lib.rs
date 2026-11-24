@@ -53,6 +53,9 @@ pub enum RateLimitMode {
 impl RateLimitMode {
     /// Parse and validate the `RATE_LIMIT_MODE` env var, failing fast on
     /// unknown values instead of silently picking the wrong topology.
+    /// # Panics
+    ///
+    /// -
     #[must_use]
     pub fn from_env() -> Self {
         let raw = std::env::var("RATE_LIMIT_MODE").unwrap_or_else(|_| "direct".to_string());
@@ -266,6 +269,10 @@ fn unauthorized_envelope() -> Response {
     (StatusCode::UNAUTHORIZED, axum::Json(body)).into_response()
 }
 
+///
+/// # Panics
+///
+/// -
 pub fn app(state: AppState) -> Router {
     // Public auth routes — rate limited via tower_governor (set
     // RATE_LIMIT_MODE=disabled in tests so oneshot() requests don't

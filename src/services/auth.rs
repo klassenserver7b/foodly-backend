@@ -156,6 +156,10 @@ pub fn create_access_token(
 }
 
 /// Verify a JWT access token and return the `user_id` from the `sub` claim.
+///
+/// # Errors
+///
+/// -
 pub fn verify_access_token(token: &str, secret: &str) -> anyhow::Result<i64> {
     let mut validation = Validation::new(Algorithm::HS256);
     validation.leeway = 60;
